@@ -4,6 +4,8 @@ import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, FileText, Menu,
 import './styles.css';
 
 const TODAY = '2026-08-26';
+function readStored(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
+
 const seedProjects = [
   { id: 'product', name: '产品迭代', color: '#5f9d95' },
   { id: 'client', name: '客户项目', color: '#b47eb2' },
@@ -24,8 +26,8 @@ function currentSchedule() { const now = new Date(); const date = `${now.getFull
 function md(text) { return text.split('\n').map(line => { const x=line.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img alt="$1" src="$2"/>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>'); if(line.startsWith('# '))return `<h1>${x.slice(2)}</h1>`; if(line.startsWith('## '))return `<h2>${x.slice(3)}</h2>`; if(line.startsWith('> '))return `<blockquote>${x.slice(2)}</blockquote>`; if(line.startsWith('- [x] '))return `<p class="check checked"><span>✓</span>${x.slice(6)}</p>`; if(line.startsWith('- [ ] '))return `<p class="check"><span></span>${x.slice(6)}</p>`; if(line.startsWith('- '))return `<li>${x.slice(2)}</li>`; if(!line.trim())return '<div class="gap"/>'; return `<p>${x}</p>`; }).join(''); }
 
 function App(){
- const [projects,setProjects]=useState(()=>JSON.parse(localStorage.getItem('dt-projects')||'null')||seedProjects);
- const [docs,setDocs]=useState(()=>JSON.parse(localStorage.getItem('dt-docs')||'null')||seedDocs);
+ const [projects,setProjects]=useState(()=>readStored('dt-projects', seedProjects));
+ const [docs,setDocs]=useState(()=>readStored('dt-docs', seedDocs));
  const [project,setProject]=useState('product'); const [view,setView]=useState('notes'); const [selectedId,setSelectedId]=useState(1); const [query,setQuery]=useState(''); const [mode,setMode]=useState('write'); const [month,setMonth]=useState(7); const [newProject,setNewProject]=useState(false); const [draft,setDraft]=useState(''); const [mobile,setMobile]=useState(false); const area=useRef(null);
  useEffect(()=>localStorage.setItem('dt-projects',JSON.stringify(projects)),[projects]); useEffect(()=>localStorage.setItem('dt-docs',JSON.stringify(docs)),[docs]);
  const selected=docs.find(d=>d.id===selectedId&&d.project===project)||docs.find(d=>d.project===project)||docs[0]; const projectDocs=useMemo(()=>docs.filter(d=>d.project===project&&(!query||`${d.title} ${d.content} ${d.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase()))),[docs,project,query]);
