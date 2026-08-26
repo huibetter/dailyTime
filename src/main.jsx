@@ -1,0 +1,80 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, FileText, Filter, Folder, Hash, Inbox, LayoutGrid, ListChecks, MoreHorizontal, Paperclip, Plus, Search, Settings, Sparkles, Tag, Timer, Trash2, X } from 'lucide-react';
+import './styles.css';
+
+const today = '2026-08-26';
+const initialSpaces = [
+  { id: 'all', name: '全部工作', icon: Inbox, color: '#e2b33d', count: 8 },
+  { id: 'product', name: '产品迭代', icon: Folder, color: '#4ea2a4', count: 4 },
+  { id: 'client', name: '客户项目', icon: Folder, color: '#b878bd', count: 2 },
+  { id: 'personal', name: '个人成长', icon: Folder, color: '#d68c5d', count: 2 },
+];
+const initialNotes = [
+  { id: 1, space: 'product', title: '首页信息架构梳理', content: '完成首页信息架构梳理，明确首屏的核心价值传达。', status: '进行中', priority: '高', date: '2026-08-26', time: '09:00', duration: 90, tags: ['设计', '本周重点'], attachment: '首页改版草案.pdf' },
+  { id: 2, space: 'product', title: '用户访谈记录整理', content: '整理访谈原始记录，提炼用户在每日工作流中的真实痛点。', status: '未开始', priority: '普通', date: '2026-08-26', time: '11:00', duration: 60, tags: ['研究'], attachment: '' },
+  { id: 3, space: 'client', title: '周报数据可视化', content: '将客户周报中的关键指标转换为可读的趋势图表。', status: '未开始', priority: '普通', date: '2026-08-26', time: '14:00', duration: 120, tags: ['交付', '客户'], attachment: '数据源.xlsx' },
+  { id: 4, space: 'product', title: '设计评审会', content: '同步首页视觉方向与交互细节，记录后续调整项。', status: '已完成', priority: '高', date: '2026-08-25', time: '15:30', duration: 45, tags: ['会议'], attachment: '' },
+  { id: 5, space: 'personal', title: '阅读《设计的心理学》', content: '阅读第三章并记录三个可以应用在当前项目中的原则。', status: '未开始', priority: '低', date: '2026-08-27', time: '20:00', duration: 45, tags: ['输入'], attachment: '' },
+  { id: 6, space: 'client', title: '整理客户反馈', content: '根据客户群反馈，拆解需要在下个版本解决的问题。', status: '未开始', priority: '普通', date: '2026-08-27', time: '10:00', duration: 60, tags: ['客户'], attachment: '' },
+  { id: 7, space: 'product', title: '更新项目 README', content: '补充本地开发、分支策略和发布流程说明。', status: '未开始', priority: '低', date: '2026-08-28', time: '16:00', duration: 30, tags: ['文档'], attachment: '' },
+  { id: 8, space: 'personal', title: '复盘本周工作', content: '总结本周进展，安排下周最重要的三件事。', status: '未开始', priority: '普通', date: '2026-08-28', time: '18:00', duration: 30, tags: ['复盘'], attachment: '' },
+];
+
+function formatDate(date) { const d = new Date(`${date}T12:00:00`); return `${d.getMonth() + 1}月${d.getDate()}日`; }
+function weekday(date) { return ['周日','周一','周二','周三','周四','周五','周六'][new Date(`${date}T12:00:00`).getDay()]; }
+function addDays(date, count) { const d = new Date(`${date}T12:00:00`); d.setDate(d.getDate() + count); return d.toISOString().slice(0, 10); }
+function dateLabel(date) { if (date === today) return '今天'; if (date === addDays(today, 1)) return '明天'; return `${formatDate(date)} ${weekday(date)}`; }
+
+function App() {
+  const [notes, setNotes] = useState(() => { try { return JSON.parse(localStorage.getItem('dailytime-notes')) || initialNotes; } catch { return initialNotes; } });
+  const [spaces, setSpaces] = useState(initialSpaces);
+  const [activeSpace, setActiveSpace] = useState('all');
+  const [view, setView] = useState('today');
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState(1);
+  const [modal, setModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [calendarMonth, setCalendarMonth] = useState(7);
+
+  useEffect(() => localStorage.setItem('dailytime-notes', JSON.stringify(notes)), [notes]);
+  const selected = notes.find(n => n.id === selectedId) || notes[0];
+  const filtered = useMemo(() => notes.filter(n => (activeSpace === 'all' || n.space === activeSpace) && (!query || `${n.title} ${n.content} ${n.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase()))), [notes, activeSpace, query]);
+  const todayNotes = filtered.filter(n => n.date === today).sort((a,b) => a.time.localeCompare(b.time));
+  const upcoming = filtered.filter(n => n.date > today).sort((a,b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  const done = notes.filter(n => n.status === '已完成').length;
+  const progress = Math.round(done / notes.length * 100);
+
+  function toggleStatus(id) { setNotes(prev => prev.map(n => n.id === id ? { ...n, status: n.status === '已完成' ? '未开始' : '已完成' } : n)); }
+  function saveNote(data) { if (editing) setNotes(prev => prev.map(n => n.id === editing.id ? { ...n, ...data } : n)); else { const newNote = { ...data, id: Date.now(), tags: data.tags || [], attachment: '' }; setNotes(prev => [newNote, ...prev]); setSelectedId(newNote.id); } setModal(false); setEditing(null); }
+  function removeNote(id) { setNotes(prev => prev.filter(n => n.id !== id)); if (selectedId === id) setSelectedId(notes.find(n => n.id !== id)?.id); }
+  const grouped = upcoming.reduce((acc, n) => { (acc[n.date] ||= []).push(n); return acc; }, {});
+
+  return <div className="app-shell">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark"><Sparkles size={17}/></div><div><strong>DailyTime</strong><span>工作节奏管理</span></div></div>
+      <button className="new-note" onClick={() => { setEditing(null); setModal(true); }}><Plus size={17}/> 新建便签 <kbd>N</kbd></button>
+      <div className="side-section"><div className="section-label">工作空间 <Plus size={15}/></div>{spaces.map(s => { const Icon = s.icon; return <button key={s.id} className={`space-item ${activeSpace === s.id ? 'active' : ''}`} onClick={() => setActiveSpace(s.id)}><Icon size={16} style={{color:s.color}}/><span>{s.name}</span><em>{s.id === 'all' ? notes.length : notes.filter(n => n.space === s.id).length}</em></button> })}</div>
+      <div className="side-section nav-section"><div className="section-label">视图</div><button className={`space-item ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}><ListChecks size={16}/><span>今日清单</span><em>{notes.filter(n => n.date === today && n.status !== '已完成').length}</em></button><button className={`space-item ${view === 'timeline' ? 'active' : ''}`} onClick={() => setView('timeline')}><Timer size={16}/><span>时间线</span></button><button className={`space-item ${view === 'calendar' ? 'active' : ''}`} onClick={() => setView('calendar')}><CalendarDays size={16}/><span>日历</span></button></div>
+      <div className="sidebar-footer"><div className="mini-progress"><div><span>本周完成度</span><b>{progress}%</b></div><div className="progress-track"><i style={{width:`${progress}%`}}/></div></div><button className="icon-row"><Settings size={16}/> 设置</button><button className="icon-row"><CircleHelp size={16}/> 帮助中心</button><div className="profile"><div className="avatar">H</div><div><b>Hi, Huibetter</b><span>保持专注，慢慢变好。</span></div><MoreHorizontal size={17}/></div></div>
+    </aside>
+    <main className="main-content">
+      <header className="topbar"><div className="breadcrumbs"><span>工作空间</span><ChevronRight size={14}/><b>{view === 'today' ? '今日清单' : view === 'timeline' ? '时间线' : '日历'}</b></div><div className="top-actions"><label className="search"><Search size={16}/><input placeholder="搜索便签..." value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ K</kbd></label><button className="round-btn"><Paperclip size={17}/></button><button className="round-btn"><div className="notify-dot"/><Clock3 size={17}/></button><div className="avatar avatar-small">H</div></div></header>
+      <div className="content-wrap">
+        {view === 'today' && <><div className="hero"><div><p className="eyebrow">WEDNESDAY · AUGUST 26, 2026</p><h1>早上好，今天也要专注。<span>✦</span></h1><p>把注意力放在当下，完成最重要的事情。</p></div><div className="focus-card"><div className="focus-icon"><Timer size={19}/></div><div><span>今日专注时间</span><strong>3h 40m</strong></div><ChevronDown size={17}/></div></div><div className="stats-row"><div><span>今日任务</span><strong>{todayNotes.length}</strong><small>件</small></div><div><span>已完成</span><strong>{todayNotes.filter(n=>n.status==='已完成').length}</strong><small>件</small></div><div><span>预计用时</span><strong>4h 15m</strong><small></small></div><div><span>专注进度</span><strong>{Math.round(todayNotes.filter(n=>n.status==='已完成').length / Math.max(todayNotes.length,1) * 100)}%</strong><small></small></div></div><div className="section-heading"><div><h2>今日安排</h2><span>{formatDate(today)} · {weekday(today)}</span></div><div className="heading-actions"><button><Filter size={15}/> 筛选</button><button className="view-toggle active"><LayoutGrid size={15}/></button><button className="view-toggle"><ListChecks size={15}/></button></div></div><div className="task-layout"><div className="task-list">{todayNotes.map((note, i) => <TaskCard key={note.id} note={note} selected={selectedId===note.id} onSelect={() => setSelectedId(note.id)} onToggle={() => toggleStatus(note.id)} delay={i*60}/>) }{todayNotes.length === 0 && <EmptyState/>}<button className="quick-add" onClick={() => { setEditing(null); setModal(true); }}><Plus size={16}/> 添加一条便签</button></div><NoteDetail note={selected} onEdit={() => { setEditing(selected); setModal(true); }} onDelete={() => removeNote(selected.id)} onToggle={() => toggleStatus(selected.id)}/></div></>}
+        {view === 'timeline' && <Timeline notes={notes} onSelect={id => {setSelectedId(id); setView('today')}}/>}
+        {view === 'calendar' && <Calendar notes={notes} month={calendarMonth} setMonth={setCalendarMonth} onSelect={id => {setSelectedId(id); setView('today')}}/>}
+      </div>
+    </main>
+    {modal && <NoteModal note={editing} onClose={() => {setModal(false);setEditing(null)}} onSave={saveNote}/>} 
+  </div>;
+}
+
+function TaskCard({note, selected, onSelect, onToggle, delay}) { return <div className={`task-card ${selected ? 'selected' : ''}`} style={{animationDelay:`${delay}ms`}} onClick={onSelect}><div className="task-time"><b>{note.time}</b><span>{note.duration} min</span></div><div className="task-line"><i className={`status-dot ${note.status === '已完成' ? 'done' : ''}`} onClick={e=>{e.stopPropagation();onToggle()}}>{note.status === '已完成' && <Check size={11}/>}</i></div><div className="task-body"><div className="task-title"><h3 className={note.status === '已完成' ? 'strike' : ''}>{note.title}</h3><span className={`priority ${note.priority}`}>{note.priority}</span></div><p>{note.content}</p><div className="task-meta">{note.tags.map(t=><span key={t}><Hash size={12}/>{t}</span>)}{note.attachment && <span><Paperclip size={12}/>{note.attachment}</span>}</div></div><MoreHorizontal className="task-more" size={17}/></div> }
+function NoteDetail({note,onEdit,onDelete,onToggle}) { if (!note) return <div className="detail-panel empty-detail">选择一条便签查看详情</div>; return <aside className="detail-panel"><div className="detail-top"><span className={`status-pill ${note.status}`}>{note.status}</span><div><button onClick={onEdit}><MoreHorizontal size={18}/></button></div></div><h2>{note.title}</h2><div className="detail-time"><Clock3 size={15}/><span>{formatDate(note.date)} · {note.time}</span><b>{note.duration} min</b></div><div className="markdown"><p>{note.content}</p><h4>工作清单</h4><label><span className="check-box checked"><Check size={12}/></span>明确这项工作的交付标准</label><label><span className="check-box"></span>完成初稿并自查一遍</label><label><span className="check-box"></span>同步给相关同事确认</label><blockquote>保持简单，把复杂留在幕后。</blockquote></div>{note.attachment && <div className="attachment"><div className="file-icon"><FileText size={18}/></div><div><b>{note.attachment}</b><span>附件 · 点击预览</span></div><MoreHorizontal size={16}/></div>}<div className="detail-footer"><button className="complete-btn" onClick={onToggle}>{note.status === '已完成' ? '标记为未完成' : '标记为已完成'}</button><button className="delete-btn" onClick={onDelete}><Trash2 size={15}/></button></div></aside> }
+function EmptyState(){return <div className="empty-state"><Sparkles size={22}/><h3>今天没有安排</h3><p>给自己留一点空间，或者创建一条新便签。</p></div>}
+function Timeline({notes,onSelect}) { const dates=[today,addDays(today,1),addDays(today,2)]; return <div className="view-page"><div className="page-title"><div><p className="eyebrow">SCHEDULE</p><h1>时间线</h1><p>按时间顺序，掌握接下来几天的节奏。</p></div><button className="primary-btn"><Plus size={16}/> 添加安排</button></div><div className="timeline-board">{dates.map(date=><div className="timeline-day" key={date}><div className="day-label"><b>{dateLabel(date)}</b><span>{notes.filter(n=>n.date===date).length} 项安排</span></div><div className="timeline-items">{notes.filter(n=>n.date===date).sort((a,b)=>a.time.localeCompare(b.time)).map(n=><button key={n.id} onClick={()=>onSelect(n.id)} className={`timeline-item ${n.status==='已完成'?'completed':''}`}><span>{n.time}</span><i/><div><b>{n.title}</b><small>{n.duration} min · {n.priority}优先级</small></div></button>)}</div></div>)}</div></div> }
+function Calendar({notes,month,setMonth,onSelect}) { const year=2026; const first=new Date(year,month,1).getDay(); const days=new Date(year,month+1,0).getDate(); const cells=Array.from({length:first+days},(_,i)=>i<first?null:i-first+1); return <div className="view-page"><div className="page-title"><div><p className="eyebrow">MONTHLY OVERVIEW</p><h1>日历</h1><p>看看工作便签如何分布在这个月。</p></div><div className="month-switch"><button onClick={()=>setMonth(m=>Math.max(0,m-1))}><ChevronLeft size={18}/></button><b>2026 年 {month+1} 月</b><button onClick={()=>setMonth(m=>Math.min(11,m+1))}><ChevronRight size={18}/></button></div></div><div className="calendar"><div className="weekdays">{['日','一','二','三','四','五','六'].map(x=><span key={x}>{x}</span>)}</div><div className="calendar-grid">{cells.map((day,i)=>{const date=day?`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`:''; const items=notes.filter(n=>n.date===date); return <div key={i} className={`calendar-cell ${date===today?'is-today':''}`}><span className="cell-day">{day}</span>{items.slice(0,3).map(n=><button key={n.id} onClick={()=>onSelect(n.id)} className={`calendar-task ${n.status==='已完成'?'done':''}`}><i/>{n.title}</button>)}{items.length>3&&<small>+{items.length-3} 项</small>}</div>})}</div></div></div> }
+function NoteModal({note,onClose,onSave}) { const [form,setForm]=useState(note||{title:'',content:'',space:'product',status:'未开始',priority:'普通',date:today,time:'09:00',duration:60,tags:[]}); const update=(key,val)=>setForm(f=>({...f,[key]:val})); return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-head"><div><p className="eyebrow">{note?'EDIT NOTE':'NEW NOTE'}</p><h2>{note?'编辑便签':'创建工作便签'}</h2></div><button onClick={onClose}><X size={18}/></button></div><label>标题<input autoFocus value={form.title} onChange={e=>update('title',e.target.value)} placeholder="例如：完成首页设计"/></label><label>工作内容<textarea value={form.content} onChange={e=>update('content',e.target.value)} placeholder="支持 Markdown 语法，例如 - [ ] 待办事项"/></label><div className="form-grid"><label>日期<input type="date" value={form.date} onChange={e=>update('date',e.target.value)}/></label><label>时间<input type="time" value={form.time} onChange={e=>update('time',e.target.value)}/></label><label>预计时长<select value={form.duration} onChange={e=>update('duration',Number(e.target.value))}><option value="30">30 分钟</option><option value="45">45 分钟</option><option value="60">1 小时</option><option value="90">1.5 小时</option><option value="120">2 小时</option></select></label><label>优先级<select value={form.priority} onChange={e=>update('priority',e.target.value)}><option>低</option><option>普通</option><option>高</option><option>紧急</option></select></label></div><label>便签空间<select value={form.space} onChange={e=>update('space',e.target.value)}><option value="product">产品迭代</option><option value="client">客户项目</option><option value="personal">个人成长</option></select></label><div className="modal-actions"><button onClick={onClose}>取消</button><button className="primary-btn" disabled={!form.title.trim()} onClick={()=>onSave(form)}>保存便签</button></div></div></div> }
+
+createRoot(document.getElementById('root')).render(<App />);
