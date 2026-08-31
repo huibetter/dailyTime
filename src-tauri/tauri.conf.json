@@ -1,0 +1,9 @@
+{
+  "productName": "DailyTime",
+  "version": "0.1.0",
+  "identifier": "com.dailytime.desktop",
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
+  "app": { "windows": [{ "title": "DailyTime", "width": 1280, "height": 820, "minWidth": 960, "minHeight": 640, "resizable": true }], "security": { "csp": "default-src 'self' ipc: http://ipc.localhost asset: https://images.unsplash.com data:; img-src 'self' asset: https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'" } },
+  "bundle": { "active": true, "targets": ["nsis"], "windows": { "nsis": { "installMode": "currentUser" } } }
+}
+
