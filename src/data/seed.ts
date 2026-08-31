@@ -1,0 +1,77 @@
+import type { DocumentItem, Project } from '../types/domain';
+
+const now = '2026-08-27T09:00:00.000Z';
+
+export const seedProjects: Project[] = [
+  { id: 'product', name: '产品迭代', color: '#5f9d95', createdAt: now, updatedAt: now },
+  { id: 'client', name: '客户项目', color: '#b47eb2', createdAt: now, updatedAt: now },
+  { id: 'growth', name: '个人成长', color: '#d79661', createdAt: now, updatedAt: now },
+];
+
+export const seedDocuments: DocumentItem[] = [
+  {
+    id: 'demo-1',
+    projectId: 'product',
+    title: '首页信息架构梳理',
+    content: '# 首页信息架构梳理\n\n> 目标：让用户在 5 秒内理解 DailyTime 能解决什么问题。\n\n## 当前结论\n\n- [x] 明确首屏核心价值\n- [ ] 补充用户场景入口\n- [ ] 与视觉同学确认信息层级\n\n## 需要继续思考\n\n首页不应该只是任务列表，而应该是一个可以持续沉淀工作上下文的地方。\n\n![首页草图](https://images.unsplash.com/photo-1558655146-d09347e92766?w=900)',
+    plannedDate: '2026-08-26',
+    plannedTime: '09:42',
+    status: '进行中',
+    tags: ['设计', '本周重点'],
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: 'demo-2',
+    projectId: 'product',
+    title: '用户访谈记录整理',
+    content: '# 用户访谈记录整理\n\n## 访谈对象\n\n- 产品经理 2 位\n- 设计师 3 位\n- 独立开发者 2 位\n\n## 观察\n\n> 大多数人不是缺少待办清单，而是缺少工作上下文的连续记录。',
+    plannedDate: '2026-08-27',
+    plannedTime: '18:10',
+    status: '未开始',
+    tags: ['研究'],
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: 'demo-3',
+    projectId: 'client',
+    title: '周报数据可视化',
+    content: '# 周报数据可视化\n\n## 本周需要交付\n\n- [ ] 统一指标口径\n- [ ] 完成趋势图\n- [ ] 输出可分享版本',
+    plannedDate: '2026-08-26',
+    plannedTime: '15:35',
+    status: '未开始',
+    tags: ['交付', '客户'],
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: 'demo-4',
+    projectId: 'product',
+    title: '设计评审会纪要',
+    content: '# 设计评审会纪要\n\n## 已达成共识\n\n1. 用工作空间承载上下文。\n2. 用文档而不是卡片承载完整内容。\n3. 时间规划只作为文档属性存在。',
+    plannedDate: '2026-08-25',
+    plannedTime: '10:20',
+    status: '已完成',
+    tags: ['会议'],
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: 'demo-5',
+    projectId: 'growth',
+    title: '阅读《设计的心理学》',
+    content: '# 阅读《设计的心理学》\n\n## 摘录\n\n好的设计应该让复杂的事情变得自然。\n\n## 我的思考\n\n把今天的工作写下来，本身也是在降低未来重新理解它的成本。',
+    plannedDate: '2026-08-28',
+    plannedTime: '20:00',
+    status: '未开始',
+    tags: ['输入'],
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+  },
+];

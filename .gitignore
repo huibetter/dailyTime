@@ -1,0 +1,42 @@
+# Dependencies
+/node_modules/
+
+# Frontend build output
+/dist/
+
+# Vite cache
+/node_modules/.vite/
+
+# Tauri build output and generated files
+/src-tauri/target/
+/src-tauri/gen/
+
+# Local databases and runtime data
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+.DS_Store
+Thumbs.db
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS-specific files
+Desktop.ini
