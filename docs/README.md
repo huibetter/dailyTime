@@ -11,6 +11,7 @@
 ## 技术方案
 
 - [桌面应用技术框架方案](./superpowers/plans/2026-09-02-desktop-architecture.md)
+- [桌面开发说明](./desktop-development.md)
 
 ## 项目工作区文档
 
