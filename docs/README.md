@@ -8,6 +8,10 @@
 - [`history/`](./history/)：功能修改历史和重要变更记录。
 - [`superpowers/plans/`](./superpowers/plans/)：实施计划和设计方案。
 
+## 技术方案
+
+- [桌面应用技术框架方案](./superpowers/plans/2026-09-02-desktop-architecture.md)
+
 ## 项目工作区文档
 
 - [Product Iteration](./reference/projects/product-iteration.md)
