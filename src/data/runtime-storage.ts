@@ -25,6 +25,12 @@ export interface RuntimeState {
   docs: RuntimeDocument[];
 }
 
+export interface RuntimeSettings {
+  name: string;
+  workspace: string;
+  avatar: string;
+}
+
 interface ProjectRow {
   id: string;
   name: string;
@@ -46,6 +52,12 @@ interface TagRow {
   document_id: string;
   name: string;
 }
+
+interface SettingRow {
+  value: string;
+}
+
+const PROFILE_SETTINGS_KEY = 'profile';
 
 const DESKTOP = isTauri();
 
@@ -80,10 +92,6 @@ export async function loadDesktopState(): Promise<RuntimeState> {
     await db.execute(
       'INSERT INTO workspaces (id, name, display_name, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)',
       [workspaceId, '我的工作空间', '我的工作空间', timestamp, timestamp],
-    );
-    await db.execute(
-      'INSERT INTO projects (id, workspace_id, name, color, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)',
-      ['product', workspaceId, '产品迭代', '#5f9d95', timestamp, timestamp],
     );
   }
 
@@ -123,6 +131,11 @@ export async function saveDesktopProjects(projects: RuntimeProject[]): Promise<v
   const workspace = await db.select<{ id: string }[]>('SELECT id FROM workspaces ORDER BY created_at LIMIT 1');
   if (!workspace[0]) return;
   const timestamp = now();
+  const existing = await db.select<{ id: string }[]>('SELECT id FROM projects WHERE workspace_id = $1', [workspace[0].id]);
+  const nextIds = new Set(projects.map((project) => project.id));
+  for (const row of existing) {
+    if (!nextIds.has(row.id)) await db.execute('DELETE FROM projects WHERE id = $1', [row.id]);
+  }
   for (const project of projects) {
     await db.execute(
       `INSERT INTO projects (id, workspace_id, name, color, created_at, updated_at)
@@ -131,6 +144,29 @@ export async function saveDesktopProjects(projects: RuntimeProject[]): Promise<v
       [project.id, workspace[0].id, project.name, project.color, timestamp, timestamp],
     );
   }
+}
+
+export async function loadDesktopSettings(): Promise<RuntimeSettings | null> {
+  if (!DESKTOP) return null;
+  const db = await openDatabase();
+  const rows = await db.select<SettingRow[]>('SELECT value FROM app_settings WHERE key = $1 LIMIT 1', [PROFILE_SETTINGS_KEY]);
+  if (!rows[0]) return null;
+  try {
+    const value = JSON.parse(rows[0].value);
+    if (typeof value?.name !== 'string' || typeof value?.workspace !== 'string' || typeof value?.avatar !== 'string') return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDesktopSettings(settings: RuntimeSettings): Promise<void> {
+  if (!DESKTOP) return;
+  const db = await openDatabase();
+  await db.execute(
+    'INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    [PROFILE_SETTINGS_KEY, JSON.stringify(settings)],
+  );
 }
 
 export async function saveDesktopDocuments(docs: RuntimeDocument[]): Promise<void> {

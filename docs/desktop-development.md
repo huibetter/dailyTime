@@ -24,7 +24,8 @@ npm run tauri:build
 - React 页面和交互位于 `src/`。
 - 本地数据类型和数据库访问位于 `src/data/`。
 - Tauri 配置、Rust 插件注册和 SQLite 迁移位于 `src-tauri/`。
-- 当前浏览器预览仍使用 `localStorage` Demo 数据；Tauri 运行时使用 SQLite，首次启动创建空的默认工作空间。
+- 浏览器预览使用 `localStorage` 持久化项目、文档和界面设置；Tauri 运行时使用 SQLite，首次启动只创建空的默认工作空间。
+- 桌面端本机用户配置保存在 SQLite 的 `app_settings` 表，旧版本的 `localStorage` profile 会在首次启动时迁移；已有桌面数据不会自动清理。
 
 ## 当前阶段限制
 
