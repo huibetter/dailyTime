@@ -60,6 +60,13 @@ interface SettingRow {
 const PROFILE_SETTINGS_KEY = 'profile';
 
 const DESKTOP = isTauri();
+let desktopWriteQueue = Promise.resolve();
+
+function enqueueDesktopWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const result = desktopWriteQueue.then(operation);
+  desktopWriteQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -127,6 +134,7 @@ export async function loadDesktopState(): Promise<RuntimeState> {
 
 export async function saveDesktopProjects(projects: RuntimeProject[]): Promise<void> {
   if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
   const db = await openDatabase();
   const workspace = await db.select<{ id: string }[]>('SELECT id FROM workspaces ORDER BY created_at LIMIT 1');
   if (!workspace[0]) return;
@@ -144,6 +152,7 @@ export async function saveDesktopProjects(projects: RuntimeProject[]): Promise<v
       [project.id, workspace[0].id, project.name, project.color, timestamp, timestamp],
     );
   }
+  });
 }
 
 export async function loadDesktopSettings(): Promise<RuntimeSettings | null> {
@@ -162,15 +171,18 @@ export async function loadDesktopSettings(): Promise<RuntimeSettings | null> {
 
 export async function saveDesktopSettings(settings: RuntimeSettings): Promise<void> {
   if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
   const db = await openDatabase();
   await db.execute(
     'INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     [PROFILE_SETTINGS_KEY, JSON.stringify(settings)],
   );
+  });
 }
 
 export async function saveDesktopDocuments(docs: RuntimeDocument[]): Promise<void> {
   if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
   const db = await openDatabase();
   const existing = await db.select<{ id: string }[]>('SELECT id FROM documents');
   const nextIds = new Set(docs.map((document) => String(document.id)));
@@ -200,4 +212,5 @@ export async function saveDesktopDocuments(docs: RuntimeDocument[]): Promise<voi
       if (tag[0]) await db.execute('INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES ($1, $2)', [id, tag[0].id]);
     }
   }
+  });
 }
