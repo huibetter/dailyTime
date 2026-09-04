@@ -27,14 +27,34 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["deb", "appimage", "nsis", "msi", "app", "dmg"],
+    "category": "Office",
+    "shortDescription": "个人工作节奏管理工具",
+    "longDescription": "DailyTime 用于组织项目文档、项目排期和日常工作内容。",
+    "publisher": "Huibetter",
+    "homepage": "https://github.com/huibetter/dailyTime",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "librsvg2-2"
+        ],
+        "section": "utils",
+        "priority": "optional"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   },
   "plugins": {
     "sql": {

@@ -4,7 +4,7 @@ DailyTime 是一款面向个人工作节奏管理的桌面应用，用于组织�
 
 ## 当前状态
 
-项目已完成 Tauri 2 桌面工程基线和 SQLite 本地存储接入，当前处于桌面版持续开发阶段。现已可以构建 Windows 安装包，首发目标为 Windows 10/11 x64。
+项目已完成 Tauri 2 桌面工程基线和 SQLite 本地存储接入，当前处于桌面版持续开发阶段。当前 Linux 首发验证目标为 Debian 13（trixie）amd64，同时保留 Windows 和 macOS 的共用构建能力。
 
 ## 主要功能
 
@@ -90,9 +90,10 @@ dist/                   前端构建产物
 - [桌面开发说明](./docs/desktop-development.md)
 - [桌面应用架构方案](./docs/superpowers/plans/2026-09-02-desktop-architecture.md)
 - [修改历史](./docs/history/)
+- [Debian 13 发布说明](./docs/debian-linux.md)
 
 ## 发布计划
 
-1. 优先完成 Windows 10/11 x64 桌面版验证和发布准备。
-2. 在核心功能稳定后验证 Linux 和 macOS 打包与运行环境。
-3. 后续再评估云同步、真实账号、多人协作、自动更新和数据备份能力。
+1. 完成 Debian 13 amd64 的 `.deb` 和 AppImage 验证。
+2. 继续完成 Windows 10/11 x64 桌面版验证和发布准备。
+3. 后续再评估 macOS、云同步、真实账号、多人协作、自动更新和数据备份能力。
