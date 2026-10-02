@@ -11,6 +11,7 @@
 ## 技术方案
 
 - [整体优化方案](./superpowers/plans/2026-10-02-整体优化方案.md)
+- [阶段二：数据层与 Repository 重构计划](./superpowers/plans/2026-10-02-阶段二数据层重构.md)
 - [桌面应用技术框架方案](./superpowers/plans/2026-09-02-desktop-architecture.md)
 - [桌面开发说明](./desktop-development.md)
 - [Debian 13 发布说明](./debian-linux.md)
