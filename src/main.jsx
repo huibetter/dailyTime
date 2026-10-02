@@ -32,9 +32,17 @@ import {
   saveDesktopProjects,
   saveDesktopSettings,
 } from './data/runtime-storage';
+import { currentSchedule, dayLabel, monthCursor, todayKey } from './lib/date-utils';
+import {
+  documentMarkdown,
+  documentTitle,
+  firstHeading,
+  normalizeDocument,
+  safeFileName,
+} from './lib/document-utils';
 import './styles.css';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayKey();
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.1.0';
 const APP_COMMIT = import.meta.env.VITE_APP_COMMIT || 'unknown';
 const UPDATE_REPO = 'https://github.com/huibetter/dailyTime';
@@ -49,59 +57,6 @@ function readStored(key, fallback) {
     return fallback;
   }
 }
-function normalizeDoc(doc) {
-  const content = typeof doc.content === 'string' ? doc.content : '';
-  return {
-    ...doc,
-    tags: Array.isArray(doc.tags) ? doc.tags : [],
-    attachments: Array.isArray(doc.attachments) ? doc.attachments : [],
-    content,
-    title: firstHeading(content) || doc.title || '未命名便笺',
-  };
-}
-function firstHeading(content) {
-  const match = String(content || '').match(/^#\s+(.+?)\s*$/m);
-  return (match?.[1] || '')
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[\*_`~]/g, '')
-    .trim();
-}
-function documentTitle(doc) {
-  return firstHeading(doc?.content) || doc?.title || '未命名便笺';
-}
-function fmtDate(v) {
-  if (!v) return '未规划';
-  const d = new Date(`${v}T12:00:00`);
-  return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
-}
-function addDays(v, n) {
-  const d = new Date(`${v}T12:00:00`);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-function dayLabel(v) {
-  if (!v) return '未规划';
-  if (v === TODAY) return '今天';
-  if (v === addDays(TODAY, 1)) return '明天';
-  return fmtDate(v);
-}
-function currentSchedule() {
-  const now = new Date();
-  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  return { date, time };
-}
-
-function monthCursor() {
-  const now = new Date();
-  return { year: now.getFullYear(), month: now.getMonth() };
-}
-
-function safeFileName(value) {
-  return (value || 'dailytime-export').replace(/[\\/:*?"<>|]/g, '-').trim() || 'dailytime-export';
-}
-
 function downloadMarkdown(filename, content) {
   const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -110,19 +65,6 @@ function downloadMarkdown(filename, content) {
   link.download = `${safeFileName(filename)}.md`;
   link.click();
   URL.revokeObjectURL(url);
-}
-
-function documentMarkdown(doc, projectName) {
-  const meta = [
-    `> 项目：${projectName || '未命名项目'}`,
-    `> 计划：${doc.planned || '未规划'}${doc.plannedTime ? ` ${doc.plannedTime}` : ''}`,
-    `> 状态：${doc.status || '未开始'}`,
-    doc.tags?.length ? `> 标签：${doc.tags.join('、')}` : '',
-  ].filter(Boolean);
-  const attachments = doc.attachments?.length
-    ? `\n\n## 附件\n\n${doc.attachments.map((item) => `- ${item}`).join('\n')}`
-    : '';
-  return `# ${documentTitle(doc)}\n\n${meta.join('\n')}\n\n${doc.content || ''}${attachments}\n`;
 }
 
 function exportDocuments(docs, projectName, filename) {
@@ -166,7 +108,8 @@ function htmlToMarkdown(root) {
     if (tag === 'del' || tag === 's') return `~~${inner}~~`;
     if (tag === 'code') return `\`${inner}\``;
     if (tag === 'a') return `[${inner}](${node.getAttribute('href') || ''})`;
-    if (tag === 'img') return `![${node.getAttribute('alt') || ''}](${node.getAttribute('src') || ''})`;
+    if (tag === 'img')
+      return `![${node.getAttribute('alt') || ''}](${node.getAttribute('src') || ''})`;
     return inner;
   };
   return [...root.childNodes]
@@ -180,7 +123,10 @@ function htmlToMarkdown(root) {
       if (tag === 'p') {
         if (node.classList.contains('check')) {
           const text = [...node.childNodes]
-            .filter((child) => !(child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === 'span'))
+            .filter(
+              (child) =>
+                !(child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === 'span'),
+            )
             .map(renderInline)
             .join('');
           return `${node.classList.contains('checked') ? '- [x] ' : '- [ ] '}${text}`;
@@ -198,7 +144,7 @@ function htmlToMarkdown(root) {
 
 function App() {
   const [projects, setProjects] = useState(() => readStored('dt-projects', []));
-  const [docs, setDocs] = useState(() => readStored('dt-docs', []).map(normalizeDoc));
+  const [docs, setDocs] = useState(() => readStored('dt-docs', []).map(normalizeDocument));
   const [desktopReady, setDesktopReady] = useState(!isDesktopStorage());
   const desktopHydrated = useRef(!isDesktopStorage());
   const [project, setProject] = useState(null);
@@ -221,7 +167,8 @@ function App() {
   const [theme, setTheme] = useState(() => readStored('dt-theme', 'light'));
   const [compact, setCompact] = useState(() => readStored('dt-compact', false));
   const [profile, setProfile] = useState(() => readStored('dt-profile', DEFAULT_PROFILE));
-  const [profileReady, setProfileReady] = useState(!isDesktopStorage());
+
+  const [persistence, setPersistence] = useState({ status: 'idle', message: '' });
   const area = useRef(null);
   const uploadInput = useRef(null);
   const menuRef = useRef(null);
@@ -234,7 +181,7 @@ function App() {
         const legacyProfile = readStored('dt-profile', DEFAULT_PROFILE);
         const nextProfile = settings || legacyProfile;
         setProjects(state.projects);
-        setDocs(state.docs.map(normalizeDoc));
+        setDocs(state.docs.map(normalizeDocument));
         setProject(state.projects[0]?.id ?? null);
         setSelectedId(state.docs[0]?.id ?? null);
         setProfile(nextProfile);
@@ -279,8 +226,8 @@ function App() {
     const handleUndo = (event) => {
       const key = event.key.toLowerCase();
       const target = event.target;
-      const isFormField = target instanceof HTMLElement &&
-        ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+      const isFormField =
+        target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
       if ((event.ctrlKey || event.metaKey) && key === 'z' && !event.shiftKey && !isFormField) {
         event.preventDefault();
         undo();
@@ -291,16 +238,26 @@ function App() {
   });
   useEffect(() => {
     if (!desktopReady || !desktopHydrated.current) return;
-    if (isDesktopStorage()) {
-      saveDesktopProjects(projects).catch((error) => console.error('项目保存失败', error));
-    } else localStorage.setItem('dt-projects', JSON.stringify(projects));
-  }, [projects, desktopReady]);
-  useEffect(() => {
-    if (!desktopReady || !desktopHydrated.current) return;
-    if (isDesktopStorage()) {
-      saveDesktopDocuments(docs).catch((error) => console.error('文档保存失败', error));
-    } else localStorage.setItem('dt-docs', JSON.stringify(docs));
-  }, [docs, desktopReady]);
+    let cancelled = false;
+    setPersistence({ status: 'saving', message: '正在保存' });
+    Promise.resolve()
+      .then(async () => {
+        if (isDesktopStorage()) {
+          await Promise.all([saveDesktopProjects(projects), saveDesktopDocuments(docs)]);
+        } else {
+          localStorage.setItem('dt-projects', JSON.stringify(projects));
+          localStorage.setItem('dt-docs', JSON.stringify(docs));
+        }
+        if (!cancelled) setPersistence({ status: 'saved', message: '已保存' });
+      })
+      .catch((error) => {
+        if (!cancelled) setPersistence({ status: 'error', message: '保存失败' });
+        console.error('DailyTime 数据保存失败', error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projects, docs, desktopReady]);
   useEffect(
     () => localStorage.setItem('dt-sidebar-collapsed', JSON.stringify(sidebarCollapsed)),
     [sidebarCollapsed],
@@ -314,8 +271,18 @@ function App() {
   useEffect(() => {
     if (!profileReady) return;
     if (isDesktopStorage())
-      saveDesktopSettings(profile).catch((error) => console.error('本机配置保存失败', error));
-    else localStorage.setItem('dt-profile', JSON.stringify(profile));
+      saveDesktopSettings(profile).catch((error) => {
+        setPersistence({ status: 'error', message: '配置保存失败' });
+        console.error('本机配置保存失败', error);
+      });
+    else {
+      try {
+        localStorage.setItem('dt-profile', JSON.stringify(profile));
+      } catch (error) {
+        setPersistence({ status: 'error', message: '配置保存失败' });
+        console.error('本机配置保存失败', error);
+      }
+    }
   }, [profile, profileReady]);
   useEffect(() => {
     document.body.dataset.theme = theme;
@@ -450,7 +417,10 @@ function App() {
   function confirmDeleteProject() {
     if (!projectToDelete) return;
     const remaining = projects.filter((item) => item.id !== projectToDelete.id);
-    commit(remaining, docs.filter((item) => item.project !== projectToDelete.id));
+    commit(
+      remaining,
+      docs.filter((item) => item.project !== projectToDelete.id),
+    );
     if (project === projectToDelete.id) {
       setProject(remaining[0]?.id ?? null);
       setSelectedId(null);
@@ -566,9 +536,7 @@ function App() {
                 >
                   <i style={{ background: p.color }} />
                   <span className="sidebar-copy">{p.name}</span>
-                  <em className="sidebar-copy">
-                    {docs.filter((d) => d.project === p.id).length}
-                  </em>
+                  <em className="sidebar-copy">{docs.filter((d) => d.project === p.id).length}</em>
                 </button>
                 <button
                   className="project-export"
@@ -576,7 +544,11 @@ function App() {
                   title="导出项目记录"
                   onClick={(event) => {
                     event.stopPropagation();
-                    exportDocuments(docs.filter((d) => d.project === p.id), p.name, p.name);
+                    exportDocuments(
+                      docs.filter((d) => d.project === p.id),
+                      p.name,
+                      p.name,
+                    );
                   }}
                 >
                   <Download size={13} />
@@ -702,6 +674,16 @@ function App() {
               )}
           </div>
           <div className="top-right">
+            <span
+              className={`save-status save-status-${persistence.status}`}
+              role="status"
+              aria-live="polite"
+              title={persistence.message}
+            >
+              {persistence.status === 'saving' && '保存中…'}
+              {persistence.status === 'saved' && '已保存'}
+              {persistence.status === 'error' && '保存失败'}
+            </span>
             {view !== 'settings' && (
               <label className="search">
                 <Search size={15} />
@@ -1399,7 +1381,11 @@ function NotesView({
                 aria-label="编辑项目记录"
                 onInput={(event) => update({ content: htmlToMarkdown(event.currentTarget) })}
                 onPaste={(event) => {
-                  if ([...(event.clipboardData?.items || [])].some((item) => item.type.startsWith('image/'))) {
+                  if (
+                    [...(event.clipboardData?.items || [])].some((item) =>
+                      item.type.startsWith('image/'),
+                    )
+                  ) {
                     pasteImage(event);
                   }
                 }}
@@ -1437,19 +1423,27 @@ function Calendar({ projects, docs, month, setMonth, onTaskClick, projectFilter 
           </p>
         </div>
         <div className="month">
-          <button onClick={() => setMonth((value) => {
-            const date = new Date(value.year, value.month - 1, 1);
-            return { year: date.getFullYear(), month: date.getMonth() };
-          })}>
+          <button
+            onClick={() =>
+              setMonth((value) => {
+                const date = new Date(value.year, value.month - 1, 1);
+                return { year: date.getFullYear(), month: date.getMonth() };
+              })
+            }
+          >
             <ChevronLeft size={17} />
           </button>
           <b>
             {year} 年 {monthIndex + 1} 月
           </b>
-          <button onClick={() => setMonth((value) => {
-            const date = new Date(value.year, value.month + 1, 1);
-            return { year: date.getFullYear(), month: date.getMonth() };
-          })}>
+          <button
+            onClick={() =>
+              setMonth((value) => {
+                const date = new Date(value.year, value.month + 1, 1);
+                return { year: date.getFullYear(), month: date.getMonth() };
+              })
+            }
+          >
             <ChevronRight size={17} />
           </button>
         </div>
