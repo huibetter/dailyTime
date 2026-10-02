@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Download,
   ExternalLink,
   FileText,
   Info,
@@ -49,13 +50,25 @@ function readStored(key, fallback) {
   }
 }
 function normalizeDoc(doc) {
+  const content = typeof doc.content === 'string' ? doc.content : '';
   return {
     ...doc,
     tags: Array.isArray(doc.tags) ? doc.tags : [],
     attachments: Array.isArray(doc.attachments) ? doc.attachments : [],
-    content: typeof doc.content === 'string' ? doc.content : '',
-    title: doc.title || '未命名便笺',
+    content,
+    title: firstHeading(content) || doc.title || '未命名便笺',
   };
+}
+function firstHeading(content) {
+  const match = String(content || '').match(/^#\s+(.+?)\s*$/m);
+  return (match?.[1] || '')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[\*_`~]/g, '')
+    .trim();
+}
+function documentTitle(doc) {
+  return firstHeading(doc?.content) || doc?.title || '未命名便笺';
 }
 function fmtDate(v) {
   if (!v) return '未规划';
@@ -80,16 +93,57 @@ function currentSchedule() {
   return { date, time };
 }
 
+function monthCursor() {
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() };
+}
+
+function safeFileName(value) {
+  return (value || 'dailytime-export').replace(/[\\/:*?"<>|]/g, '-').trim() || 'dailytime-export';
+}
+
+function downloadMarkdown(filename, content) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${safeFileName(filename)}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function documentMarkdown(doc, projectName) {
+  const meta = [
+    `> 项目：${projectName || '未命名项目'}`,
+    `> 计划：${doc.planned || '未规划'}${doc.plannedTime ? ` ${doc.plannedTime}` : ''}`,
+    `> 状态：${doc.status || '未开始'}`,
+    doc.tags?.length ? `> 标签：${doc.tags.join('、')}` : '',
+  ].filter(Boolean);
+  const attachments = doc.attachments?.length
+    ? `\n\n## 附件\n\n${doc.attachments.map((item) => `- ${item}`).join('\n')}`
+    : '';
+  return `# ${documentTitle(doc)}\n\n${meta.join('\n')}\n\n${doc.content || ''}${attachments}\n`;
+}
+
+function exportDocuments(docs, projectName, filename) {
+  const content = docs.map((doc) => documentMarkdown(doc, projectName)).join('\n---\n\n');
+  downloadMarkdown(filename, content || `# ${projectName || '项目'}\n\n暂无记录\n`);
+}
+
 function md(text) {
   return text
     .split('\n')
     .map((line) => {
       const x = line
         .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2"/>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
         .replace(/`([^`]+)`/g, '<code>$1</code>');
       if (line.startsWith('# ')) return `<h1>${x.slice(2)}</h1>`;
       if (line.startsWith('## ')) return `<h2>${x.slice(3)}</h2>`;
+      if (line.startsWith('### ')) return `<h3>${x.slice(4)}</h3>`;
       if (line.startsWith('> ')) return `<blockquote>${x.slice(2)}</blockquote>`;
       if (line.startsWith('- [x] '))
         return `<p class="check checked"><span>✓</span>${x.slice(6)}</p>`;
@@ -99,6 +153,47 @@ function md(text) {
       return `<p>${x}</p>`;
     })
     .join('');
+}
+
+function htmlToMarkdown(root) {
+  const renderInline = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    const inner = [...node.childNodes].map(renderInline).join('');
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'strong' || tag === 'b') return `**${inner}**`;
+    if (tag === 'em' || tag === 'i') return `*${inner}*`;
+    if (tag === 'del' || tag === 's') return `~~${inner}~~`;
+    if (tag === 'code') return `\`${inner}\``;
+    if (tag === 'a') return `[${inner}](${node.getAttribute('href') || ''})`;
+    if (tag === 'img') return `![${node.getAttribute('alt') || ''}](${node.getAttribute('src') || ''})`;
+    return inner;
+  };
+  return [...root.childNodes]
+    .map((node) => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
+      const tag = node.tagName.toLowerCase();
+      const inner = [...node.childNodes].map(renderInline).join('');
+      if (/^h[1-3]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${inner}`;
+      if (tag === 'blockquote') return `> ${inner}`;
+      if (tag === 'li') return `- ${inner}`;
+      if (tag === 'p') {
+        if (node.classList.contains('check')) {
+          const text = [...node.childNodes]
+            .filter((child) => !(child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === 'span'))
+            .map(renderInline)
+            .join('');
+          return `${node.classList.contains('checked') ? '- [x] ' : '- [ ] '}${text}`;
+        }
+        return inner;
+      }
+      if (tag === 'br') return '';
+      if (tag === 'pre') return `\`\`\`\n${node.textContent}\n\`\`\``;
+      return inner;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function App() {
@@ -113,8 +208,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [query, setQuery] = useState('');
   const [projectQuery, setProjectQuery] = useState('');
-  const [mode, setMode] = useState('write');
-  const [month, setMonth] = useState(7);
+  const [month, setMonth] = useState(monthCursor);
   const [newProject, setNewProject] = useState(false);
   const [draft, setDraft] = useState('');
   const [projectToDelete, setProjectToDelete] = useState(null);
@@ -131,6 +225,8 @@ function App() {
   const area = useRef(null);
   const uploadInput = useRef(null);
   const menuRef = useRef(null);
+  const undoStack = useRef([]);
+  const undoConfirm = useRef(null);
   useEffect(() => {
     if (!isDesktopStorage()) return;
     Promise.all([loadDesktopState(), loadDesktopSettings()])
@@ -138,7 +234,7 @@ function App() {
         const legacyProfile = readStored('dt-profile', DEFAULT_PROFILE);
         const nextProfile = settings || legacyProfile;
         setProjects(state.projects);
-        setDocs(state.docs);
+        setDocs(state.docs.map(normalizeDoc));
         setProject(state.projects[0]?.id ?? null);
         setSelectedId(state.docs[0]?.id ?? null);
         setProfile(nextProfile);
@@ -156,6 +252,43 @@ function App() {
         setProfileReady(true);
       });
   }, []);
+  function snapshot() {
+    return { projects, docs };
+  }
+  function commit(nextProjects, nextDocs, undoMessage = '') {
+    undoStack.current.push({ snapshot: snapshot(), undoMessage });
+    if (undoStack.current.length > 80) undoStack.current.shift();
+    setProjects(nextProjects);
+    setDocs(nextDocs);
+  }
+  function undo() {
+    const entry = undoStack.current.pop();
+    if (!entry) return;
+    if (entry.undoMessage) {
+      undoConfirm.current = entry;
+      if (!window.confirm(entry.undoMessage)) {
+        undoStack.current.push(entry);
+        undoConfirm.current = null;
+        return;
+      }
+    }
+    setProjects(entry.snapshot.projects);
+    setDocs(entry.snapshot.docs);
+  }
+  useEffect(() => {
+    const handleUndo = (event) => {
+      const key = event.key.toLowerCase();
+      const target = event.target;
+      const isFormField = target instanceof HTMLElement &&
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+      if ((event.ctrlKey || event.metaKey) && key === 'z' && !event.shiftKey && !isFormField) {
+        event.preventDefault();
+        undo();
+      }
+    };
+    document.addEventListener('keydown', handleUndo);
+    return () => document.removeEventListener('keydown', handleUndo);
+  });
   useEffect(() => {
     if (!desktopReady || !desktopHydrated.current) return;
     if (isDesktopStorage()) {
@@ -226,12 +359,24 @@ function App() {
       ),
     [projects, projectQuery],
   );
-  const updateDoc = (id, patch) =>
-    setDocs((p) => p.map((d) => (d.id === id ? { ...d, ...patch, updated: '刚刚' } : d)));
+  const updateDoc = (id, patch) => {
+    const next = docs.map((d) => {
+      if (d.id !== id) return d;
+      const nextContent = patch.content ?? d.content;
+      return {
+        ...d,
+        ...patch,
+        content: nextContent,
+        title: firstHeading(nextContent) || d.title || '未命名便笺',
+        updated: '刚刚',
+      };
+    });
+    commit(projects, next);
+  };
   const update = (patch) => selected && updateDoc(selected.id, patch);
   function deleteDoc(id) {
     const remaining = docs.filter((d) => d.id !== id);
-    setDocs(remaining);
+    commit(projects, remaining);
     if (selectedId === id) {
       setSelectedId(remaining.find((d) => d.project === project)?.id ?? null);
     }
@@ -254,11 +399,13 @@ function App() {
   function openProjectSchedule(id) {
     setProject(id);
     setProjectScheduleId(id);
+    setMonth(monthCursor());
     setView('calendar');
     setMobile(false);
   }
   function openGlobalSchedule() {
     setProjectScheduleId(null);
+    setMonth(monthCursor());
     setView('calendar');
     setMobile(false);
   }
@@ -284,7 +431,7 @@ function App() {
       tags: [],
       attachments: [],
     };
-    setDocs((p) => [d, ...p]);
+    commit(projects, [d, ...docs], `是否撤回新建文档“${d.title}”？`);
     setSelectedId(d.id);
     setProjectScheduleId(null);
     setView('notes');
@@ -292,7 +439,7 @@ function App() {
   function addProject() {
     if (!draft.trim()) return;
     const p = { id: `p-${Date.now()}`, name: draft.trim(), color: '#8ca69b' };
-    setProjects((x) => [...x, p]);
+    commit([...projects, p], docs);
     setProject(p.id);
     setSelectedId(null);
     setProjectScheduleId(null);
@@ -303,8 +450,7 @@ function App() {
   function confirmDeleteProject() {
     if (!projectToDelete) return;
     const remaining = projects.filter((item) => item.id !== projectToDelete.id);
-    setProjects(remaining);
-    setDocs((items) => items.filter((item) => item.project !== projectToDelete.id));
+    commit(remaining, docs.filter((item) => item.project !== projectToDelete.id));
     if (project === projectToDelete.id) {
       setProject(remaining[0]?.id ?? null);
       setSelectedId(null);
@@ -356,6 +502,12 @@ function App() {
       el.setSelectionRange(s + a.length, e + a.length);
     });
   }
+  function exportSelected() {
+    if (selected) {
+      const name = projects.find((item) => item.id === selected.project)?.name;
+      downloadMarkdown(documentTitle(selected), documentMarkdown(selected, name));
+    }
+  }
   const menu = (name, label, Icon, items) => (
     <div className="top-menu">
       <button
@@ -405,28 +557,60 @@ function App() {
         </label>
         <div className="projects">
           {visibleProjects.map((p) => (
-            <div key={p.id} className={`project-row ${project === p.id ? 'active' : ''}`}>
-              <button
-                className="project-select"
-                title={p.name}
-                onClick={() => openProjectNotes(p.id)}
-              >
-                <i style={{ background: p.color }} />
-                <span className="sidebar-copy">{p.name}</span>
-                <em className="sidebar-copy">{docs.filter((d) => d.project === p.id).length}</em>
-              </button>
-              <button
-                className="project-delete"
-                aria-label={`删除项目${p.name}`}
-                title="删除项目"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setProjectToDelete(p);
-                }}
-              >
-                <Trash2 size={13} />
-              </button>
-            </div>
+            <React.Fragment key={p.id}>
+              <div className={`project-row ${project === p.id ? 'active' : ''}`}>
+                <button
+                  className="project-select"
+                  title={p.name}
+                  onClick={() => openProjectNotes(p.id)}
+                >
+                  <i style={{ background: p.color }} />
+                  <span className="sidebar-copy">{p.name}</span>
+                  <em className="sidebar-copy">
+                    {docs.filter((d) => d.project === p.id).length}
+                  </em>
+                </button>
+                <button
+                  className="project-export"
+                  aria-label={`导出${p.name}`}
+                  title="导出项目记录"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    exportDocuments(docs.filter((d) => d.project === p.id), p.name, p.name);
+                  }}
+                >
+                  <Download size={13} />
+                </button>
+                <button
+                  className="project-delete"
+                  aria-label={`删除项目${p.name}`}
+                  title="删除项目"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setProjectToDelete(p);
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+              {project === p.id && !sidebarCollapsed && (
+                <div className="sidebar-subprojects">
+                  {docs
+                    .filter((doc) => doc.project === p.id)
+                    .map((doc) => (
+                      <button
+                        key={doc.id}
+                        className={`sidebar-subproject ${selectedId === doc.id ? 'active' : ''}`}
+                        title={documentTitle(doc)}
+                        onClick={() => openDocumentTask(p.id, doc.id)}
+                      >
+                        <FileText size={12} />
+                        <span>{documentTitle(doc)}</span>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </React.Fragment>
           ))}
         </div>
         <div className="side-divider" />
@@ -470,11 +654,11 @@ function App() {
                   className="top-menu-item"
                   role="menuitem"
                   onClick={() => {
-                    setMode('write');
+                    undo();
                     closeMenus();
                   }}
                 >
-                  编辑当前文档
+                  撤回上次修改
                 </button>
                 <button
                   className="top-menu-item"
@@ -507,6 +691,7 @@ function App() {
                     role="menuitem"
                     onClick={() => {
                       setProjectScheduleId(project);
+                      setMonth(monthCursor());
                       setView('calendar');
                       closeMenus();
                     }}
@@ -579,12 +764,11 @@ function App() {
                 selected,
                 setSelectedId,
                 create,
-                mode,
-                setMode,
                 area,
                 update,
                 updateDoc,
                 deleteDoc,
+                exportSelected,
                 upload,
                 insert,
                 pasteImage,
@@ -912,12 +1096,11 @@ function NotesView({
   selected,
   setSelectedId,
   create,
-  mode,
-  setMode,
   area,
   update,
   updateDoc,
   deleteDoc,
+  exportSelected,
   upload,
   insert,
   pasteImage,
@@ -936,9 +1119,6 @@ function NotesView({
   ordered.forEach(([, items]) =>
     items.sort((a, b) => (b.plannedTime || '00:00').localeCompare(a.plannedTime || '00:00')),
   );
-  const [editingId, setEditingId] = useState(null);
-  const [editingTitle, setEditingTitle] = useState('');
-  const cancelledEdit = useRef(false);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [editingTag, setEditingTag] = useState(null);
@@ -954,27 +1134,6 @@ function NotesView({
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, []);
-  function startTitleEdit(doc, e) {
-    e.stopPropagation();
-    cancelledEdit.current = false;
-    setSelectedId(doc.id);
-    setEditingId(doc.id);
-    setEditingTitle(doc.title);
-  }
-  function cancelTitleEdit() {
-    cancelledEdit.current = true;
-    setEditingId(null);
-    setEditingTitle('');
-  }
-  function saveTitle(doc) {
-    if (cancelledEdit.current) {
-      cancelledEdit.current = false;
-      return;
-    }
-    const title = editingTitle.trim();
-    if (title && title !== doc.title) updateDoc(doc.id, { title });
-    cancelTitleEdit();
-  }
   function handleTaskKeyDown(doc, e) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -983,7 +1142,7 @@ function NotesView({
   }
   function removeTask(doc, e) {
     e.stopPropagation();
-    if (window.confirm('确定删除“' + doc.title + '”吗？')) deleteDoc(doc.id);
+    if (window.confirm('确定删除“' + documentTitle(doc) + '”吗？')) deleteDoc(doc.id);
   }
   function addTag() {
     const value = tagDraft.trim();
@@ -1072,42 +1231,11 @@ function NotesView({
                   >
                     <div className="note-title-row">
                       <FileText size={14} />
-                      {editingId === d.id ? (
-                        <input
-                          className="note-title-input"
-                          autoFocus
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => {
-                            e.stopPropagation();
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              saveTitle(d);
-                            }
-                            if (e.key === 'Escape') {
-                              e.preventDefault();
-                              cancelTitleEdit();
-                            }
-                          }}
-                          onBlur={() => {
-                            if (!cancelledEdit.current) saveTitle(d);
-                          }}
-                        />
-                      ) : (
-                        <b>{d.title}</b>
-                      )}
-                      <button
-                        className="note-edit"
-                        aria-label={`编辑${d.title}`}
-                        title="编辑任务名称"
-                        onClick={(e) => startTitleEdit(d, e)}
-                      >
-                        <Pencil size={12} />
-                      </button>
+                      <b>{documentTitle(d)}</b>
                     </div>
                     <p>
                       {d.content
+                        .replace(/^#\s+.*(?:\r?\n|$)/m, '')
                         .replace(/[#>*\-\[\]]/g, '')
                         .trim()
                         .slice(0, 65)}
@@ -1119,7 +1247,7 @@ function NotesView({
                       </small>
                       <button
                         className="note-delete"
-                        aria-label={`删除${d.title}`}
+                        aria-label={`删除${documentTitle(d)}`}
                         title="删除项目日程"
                         onClick={(e) => removeTask(d, e)}
                       >
@@ -1249,11 +1377,8 @@ function NotesView({
               </div>
             </div>
             <div className="format-bar">
-              <button className={mode === 'write' ? 'on' : ''} onClick={() => setMode('write')}>
-                编辑
-              </button>
-              <button className={mode === 'preview' ? 'on' : ''} onClick={() => setMode('preview')}>
-                预览
+              <button onClick={exportSelected} title="导出当前记录">
+                <Download size={14} /> 导出
               </button>
               <span />
               <button onClick={() => insert('## ')}>H2</button>
@@ -1265,20 +1390,21 @@ function NotesView({
               <button onClick={() => insert('`', '`')}>˂/˃</button>
             </div>
             <div className="paper">
-              {mode === 'write' ? (
-                <textarea
-                  ref={area}
-                  value={selected.content}
-                  onChange={(e) => update({ content: e.target.value })}
-                  onPaste={pasteImage}
-                  placeholder="记录项目背景、阶段结论、会议纪要和下一步行动……"
-                />
-              ) : (
-                <div
-                  className="preview"
-                  dangerouslySetInnerHTML={{ __html: md(selected.content) }}
-                />
-              )}
+              <div
+                ref={area}
+                className="preview inline-editor"
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-label="编辑项目记录"
+                onInput={(event) => update({ content: htmlToMarkdown(event.currentTarget) })}
+                onPaste={(event) => {
+                  if ([...(event.clipboardData?.items || [])].some((item) => item.type.startsWith('image/'))) {
+                    pasteImage(event);
+                  }
+                }}
+                dangerouslySetInnerHTML={{ __html: md(selected.content) }}
+              />
               <div className="paper-foot">
                 <small>{selected.content.length} 字符 · 自动保存</small>
               </div>
@@ -1290,9 +1416,9 @@ function NotesView({
   );
 }
 function Calendar({ projects, docs, month, setMonth, onTaskClick, projectFilter }) {
-  const year = new Date().getFullYear(),
-    first = new Date(year, month, 1).getDay(),
-    total = new Date(year, month + 1, 0).getDate(),
+  const { year, month: monthIndex } = month;
+  const first = new Date(year, monthIndex, 1).getDay(),
+    total = new Date(year, monthIndex + 1, 0).getDate(),
     cells = Array.from({ length: first + total }, (_, i) => (i < first ? null : i - first + 1));
   const visibleProjects = projectFilter ? projects.filter((p) => p.id === projectFilter) : projects;
   const visibleDocs = projectFilter ? docs.filter((d) => d.project === projectFilter) : docs;
@@ -1311,13 +1437,19 @@ function Calendar({ projects, docs, month, setMonth, onTaskClick, projectFilter 
           </p>
         </div>
         <div className="month">
-          <button onClick={() => setMonth((m) => Math.max(0, m - 1))}>
+          <button onClick={() => setMonth((value) => {
+            const date = new Date(value.year, value.month - 1, 1);
+            return { year: date.getFullYear(), month: date.getMonth() };
+          })}>
             <ChevronLeft size={17} />
           </button>
           <b>
-            {year} 年 {month + 1} 月
+            {year} 年 {monthIndex + 1} 月
           </b>
-          <button onClick={() => setMonth((m) => Math.min(11, m + 1))}>
+          <button onClick={() => setMonth((value) => {
+            const date = new Date(value.year, value.month + 1, 1);
+            return { year: date.getFullYear(), month: date.getMonth() };
+          })}>
             <ChevronRight size={17} />
           </button>
         </div>
@@ -1339,7 +1471,7 @@ function Calendar({ projects, docs, month, setMonth, onTaskClick, projectFilter 
         <div className="calendar-grid">
           {cells.map((day, i) => {
             const date = day
-              ? `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+              ? `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
               : '';
             const items = scheduledDocs.filter((d) => d.planned === date);
             return (
