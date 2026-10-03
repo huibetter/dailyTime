@@ -28,6 +28,7 @@ import { persistWorkspaceChanges } from './data/repository';
 import { workspaceRepository } from './data/workspace-repository';
 import { currentSchedule, dayLabel, monthCursor, todayKey } from './lib/date-utils';
 import { renderMarkdown } from './lib/markdown';
+import { backupToState, parseBackup, serializeBackup } from './lib/backup';
 import {
   documentMarkdown,
   documentTitle,
@@ -430,6 +431,54 @@ function App() {
       el.setSelectionRange(s + a.length, e + a.length);
     });
   }
+  function exportBackup() {
+    const content = serializeBackup(
+      {
+        projects,
+        docs,
+        profile,
+        preferences: { theme, compact, sidebarCollapsed, timelineWidth },
+      },
+      APP_VERSION,
+    );
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `DailyTime-${todayKey()}.dailytime`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setPersistence({ status: 'saved', message: '备份已导出' });
+  }
+
+  async function importBackup(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const envelope = parseBackup(await file.text());
+      if (
+        !window.confirm(
+          `确认导入 ${envelope.data.projects.length} 个项目和 ${envelope.data.docs.length} 条记录吗？`,
+        )
+      )
+        return;
+      const state = backupToState(envelope);
+      commit(state.projects, state.docs, '是否撤回备份导入？');
+      setProfile(envelope.data.profile);
+      setTheme(envelope.data.preferences.theme);
+      setCompact(envelope.data.preferences.compact);
+      setSidebarCollapsed(envelope.data.preferences.sidebarCollapsed);
+      setTimelineWidth(envelope.data.preferences.timelineWidth);
+      setProject(state.projects[0]?.id ?? null);
+      setSelectedId(state.docs[0]?.id ?? null);
+      setProjectScheduleId(null);
+      setView('notes');
+    } catch (error) {
+      setPersistence({ status: 'error', message: '备份导入失败' });
+      console.error('DailyTime 备份导入失败', error);
+    }
+  }
   function exportSelected() {
     if (selected) {
       const name = projects.find((item) => item.id === selected.project)?.name;
@@ -688,6 +737,8 @@ function App() {
               setTheme,
               compact,
               setCompact,
+              onExportBackup: exportBackup,
+              onImportBackup: importBackup,
               onBack: () => {
                 setView('notes');
                 closeMenus();
@@ -806,9 +857,12 @@ function SettingsPage({
   setTheme,
   compact,
   setCompact,
+  onExportBackup,
+  onImportBackup,
   onBack,
 }) {
   const [update, setUpdate] = useState({ status: 'idle' });
+  const backupInput = useRef(null);
   async function checkUpdate() {
     setUpdate({ status: 'checking' });
     try {
@@ -833,6 +887,7 @@ function SettingsPage({
   const sections = [
     { id: 'general', label: '通用', description: '账户与工作空间', Icon: UserRound },
     { id: 'appearance', label: '外观', description: '主题与布局', Icon: Palette },
+    { id: 'backup', label: '备份', description: '导出与恢复', Icon: Download },
     { id: 'about', label: '关于', description: '版本与更新', Icon: Info },
   ];
   return (
@@ -906,6 +961,44 @@ function SettingsPage({
             </div>
           </>
         )}
+        {section === 'backup' && (
+          <>
+            <div className="settings-heading">
+              <small>BACKUP</small>
+              <h1>备份</h1>
+              <p>导出当前工作区，或从 `.dailytime` 文件恢复本地数据。</p>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-heading">
+                <Download size={17} />
+                <div>
+                  <h2>工作区备份</h2>
+                  <p>备份包含项目、文档、标签、配置和界面偏好。</p>
+                </div>
+              </div>
+              <div className="settings-actions">
+                <button className="primary-action" onClick={onExportBackup}>
+                  <Download size={14} />
+                  导出备份
+                </button>
+                <input
+                  ref={backupInput}
+                  type="file"
+                  accept=".dailytime,application/json"
+                  hidden
+                  onChange={onImportBackup}
+                />
+                <button className="secondary-action" onClick={() => backupInput.current?.click()}>
+                  <Upload size={14} />
+                  导入备份
+                </button>
+              </div>
+              <small className="settings-hint">
+                导入前会校验文件格式，并要求确认覆盖当前工作区。
+              </small>
+            </div>
+          </>
+        )}{' '}
         {section === 'appearance' && (
           <>
             <div className="settings-heading">

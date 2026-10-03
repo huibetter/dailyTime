@@ -2395,3 +2395,28 @@ body[data-theme='dark'] .update-icon {
   color: #b45b55;
   font-weight: 700;
 }
+.settings-actions {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.secondary-action {
+  min-height: 31px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  border: 1px solid #d8e3dc;
+  border-radius: 5px;
+  background: #fff;
+  color: #66817a;
+  font-size: 10px;
+  font-weight: 700;
+}
+.settings-hint {
+  display: block;
+  margin-top: 13px;
+  color: #9aa9a3;
+  font-size: 9px;
+}
