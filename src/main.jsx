@@ -27,6 +27,7 @@ import { isDesktopStorage } from './data/runtime-storage';
 import { persistWorkspaceChanges } from './data/repository';
 import { workspaceRepository } from './data/workspace-repository';
 import { currentSchedule, dayLabel, monthCursor, todayKey } from './lib/date-utils';
+import { renderMarkdown } from './lib/markdown';
 import {
   documentMarkdown,
   documentTitle,
@@ -64,31 +65,6 @@ function downloadMarkdown(filename, content) {
 function exportDocuments(docs, projectName, filename) {
   const content = docs.map((doc) => documentMarkdown(doc, projectName)).join('\n---\n\n');
   downloadMarkdown(filename, content || `# ${projectName || '项目'}\n\n暂无记录\n`);
-}
-
-function md(text) {
-  return text
-    .split('\n')
-    .map((line) => {
-      const x = line
-        .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2"/>')
-        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>');
-      if (line.startsWith('# ')) return `<h1>${x.slice(2)}</h1>`;
-      if (line.startsWith('## ')) return `<h2>${x.slice(3)}</h2>`;
-      if (line.startsWith('### ')) return `<h3>${x.slice(4)}</h3>`;
-      if (line.startsWith('> ')) return `<blockquote>${x.slice(2)}</blockquote>`;
-      if (line.startsWith('- [x] '))
-        return `<p class="check checked"><span>✓</span>${x.slice(6)}</p>`;
-      if (line.startsWith('- [ ] ')) return `<p class="check"><span></span>${x.slice(6)}</p>`;
-      if (line.startsWith('- ')) return `<li>${x.slice(2)}</li>`;
-      if (!line.trim()) return '<div class="gap"/>';
-      return `<p>${x}</p>`;
-    })
-    .join('');
 }
 
 function htmlToMarkdown(root) {
@@ -1371,7 +1347,7 @@ function NotesView({
                     pasteImage(event);
                   }
                 }}
-                dangerouslySetInnerHTML={{ __html: md(selected.content) }}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(selected.content) }}
               />
               <div className="paper-foot">
                 <small>{selected.content.length} 字符 · 自动保存</small>
