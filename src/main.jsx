@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 import {
   ArrowLeft,
   CalendarDays,
@@ -24,14 +23,9 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
-import {
-  isDesktopStorage,
-  loadDesktopSettings,
-  loadDesktopState,
-  saveDesktopDocuments,
-  saveDesktopProjects,
-  saveDesktopSettings,
-} from './data/runtime-storage';
+import { isDesktopStorage } from './data/runtime-storage';
+import { persistWorkspaceChanges } from './data/repository';
+import { workspaceRepository } from './data/workspace-repository';
 import { currentSchedule, dayLabel, monthCursor, todayKey } from './lib/date-utils';
 import {
   documentMarkdown,
@@ -143,10 +137,10 @@ function htmlToMarkdown(root) {
 }
 
 function App() {
-  const [projects, setProjects] = useState(() => readStored('dt-projects', []));
-  const [docs, setDocs] = useState(() => readStored('dt-docs', []).map(normalizeDocument));
-  const [desktopReady, setDesktopReady] = useState(!isDesktopStorage());
-  const desktopHydrated = useRef(!isDesktopStorage());
+  const [projects, setProjects] = useState([]);
+  const [docs, setDocs] = useState([]);
+  const [desktopReady, setDesktopReady] = useState(false);
+  const desktopHydrated = useRef(false);
   const [project, setProject] = useState(null);
   const [view, setView] = useState('notes');
   const [settingsSection, setSettingsSection] = useState('general');
@@ -166,8 +160,9 @@ function App() {
   const [openMenu, setOpenMenu] = useState(null);
   const [theme, setTheme] = useState(() => readStored('dt-theme', 'light'));
   const [compact, setCompact] = useState(() => readStored('dt-compact', false));
-  const [profile, setProfile] = useState(() => readStored('dt-profile', DEFAULT_PROFILE));
+  const [profile, setProfile] = useState(DEFAULT_PROFILE);
 
+  const [profileReady, setProfileReady] = useState(false);
   const [persistence, setPersistence] = useState({ status: 'idle', message: '' });
   const area = useRef(null);
   const uploadInput = useRef(null);
@@ -175,11 +170,9 @@ function App() {
   const undoStack = useRef([]);
   const undoConfirm = useRef(null);
   useEffect(() => {
-    if (!isDesktopStorage()) return;
-    Promise.all([loadDesktopState(), loadDesktopSettings()])
+    Promise.all([workspaceRepository.loadState(), workspaceRepository.loadSettings()])
       .then(([state, settings]) => {
-        const legacyProfile = readStored('dt-profile', DEFAULT_PROFILE);
-        const nextProfile = settings || legacyProfile;
+        const nextProfile = settings || DEFAULT_PROFILE;
         setProjects(state.projects);
         setDocs(state.docs.map(normalizeDocument));
         setProject(state.projects[0]?.id ?? null);
@@ -188,10 +181,10 @@ function App() {
         desktopHydrated.current = true;
         setDesktopReady(true);
         setProfileReady(true);
-        if (!settings)
-          saveDesktopSettings(nextProfile).catch((error) =>
-            console.error('本机配置迁移失败', error),
-          );
+        if (!settings && isDesktopStorage())
+          workspaceRepository
+            .saveSettings(nextProfile)
+            .catch((error) => console.error('本机配置迁移失败', error));
       })
       .catch((error) => {
         console.error('DailyTime 数据库初始化失败', error);
@@ -203,10 +196,20 @@ function App() {
     return { projects, docs };
   }
   function commit(nextProjects, nextDocs, undoMessage = '') {
-    undoStack.current.push({ snapshot: snapshot(), undoMessage });
+    const previous = snapshot();
+    const next = { projects: nextProjects, docs: nextDocs };
+    undoStack.current.push({ snapshot: previous, undoMessage });
     if (undoStack.current.length > 80) undoStack.current.shift();
     setProjects(nextProjects);
     setDocs(nextDocs);
+    if (!desktopReady || !desktopHydrated.current) return;
+    setPersistence({ status: 'saving', message: '正在保存' });
+    persistWorkspaceChanges(workspaceRepository, { previous, next })
+      .then(() => setPersistence({ status: 'saved', message: '已保存' }))
+      .catch((error) => {
+        setPersistence({ status: 'error', message: '保存失败' });
+        console.error('DailyTime 数据保存失败', error);
+      });
   }
   function undo() {
     const entry = undoStack.current.pop();
@@ -236,28 +239,7 @@ function App() {
     document.addEventListener('keydown', handleUndo);
     return () => document.removeEventListener('keydown', handleUndo);
   });
-  useEffect(() => {
-    if (!desktopReady || !desktopHydrated.current) return;
-    let cancelled = false;
-    setPersistence({ status: 'saving', message: '正在保存' });
-    Promise.resolve()
-      .then(async () => {
-        if (isDesktopStorage()) {
-          await Promise.all([saveDesktopProjects(projects), saveDesktopDocuments(docs)]);
-        } else {
-          localStorage.setItem('dt-projects', JSON.stringify(projects));
-          localStorage.setItem('dt-docs', JSON.stringify(docs));
-        }
-        if (!cancelled) setPersistence({ status: 'saved', message: '已保存' });
-      })
-      .catch((error) => {
-        if (!cancelled) setPersistence({ status: 'error', message: '保存失败' });
-        console.error('DailyTime 数据保存失败', error);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projects, docs, desktopReady]);
+
   useEffect(
     () => localStorage.setItem('dt-sidebar-collapsed', JSON.stringify(sidebarCollapsed)),
     [sidebarCollapsed],
@@ -271,7 +253,7 @@ function App() {
   useEffect(() => {
     if (!profileReady) return;
     if (isDesktopStorage())
-      saveDesktopSettings(profile).catch((error) => {
+      workspaceRepository.saveSettings(profile).catch((error) => {
         setPersistence({ status: 'error', message: '配置保存失败' });
         console.error('本机配置保存失败', error);
       });

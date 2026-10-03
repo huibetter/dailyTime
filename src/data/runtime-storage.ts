@@ -145,6 +145,88 @@ export async function loadDesktopState(): Promise<RuntimeState> {
   };
 }
 
+async function workspaceId(): Promise<string | null> {
+  const db = await openDatabase();
+  const rows = await db.select<{ id: string }[]>(
+    'SELECT id FROM workspaces ORDER BY created_at LIMIT 1',
+  );
+  return rows[0]?.id ?? null;
+}
+
+export async function saveDesktopProject(project: RuntimeProject): Promise<void> {
+  if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
+    const db = await openDatabase();
+    const id = await workspaceId();
+    if (!id) return;
+    const timestamp = now();
+    await db.execute(
+      `INSERT INTO projects (id, workspace_id, name, color, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color, updated_at = excluded.updated_at`,
+      [project.id, id, project.name, project.color, timestamp, timestamp],
+    );
+  });
+}
+
+export async function deleteDesktopProject(id: string): Promise<void> {
+  if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
+    const db = await openDatabase();
+    await db.execute('DELETE FROM projects WHERE id = $1', [id]);
+  });
+}
+
+export async function saveDesktopDocument(document: RuntimeDocument): Promise<void> {
+  if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
+    const db = await openDatabase();
+    const timestamp = now();
+    const id = String(document.id);
+    await db.execute(
+      `INSERT INTO documents (id, project_id, title, content, planned_date, planned_time, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, title = excluded.title,
+       content = excluded.content, planned_date = excluded.planned_date, planned_time = excluded.planned_time,
+       status = excluded.status, updated_at = excluded.updated_at`,
+      [
+        id,
+        document.project,
+        document.title,
+        document.content,
+        document.planned,
+        document.plannedTime,
+        document.status,
+        timestamp,
+        timestamp,
+      ],
+    );
+    await db.execute('DELETE FROM document_tags WHERE document_id = $1', [id]);
+    for (const tagName of document.tags ?? []) {
+      const tagId = newId();
+      await db.execute(
+        'INSERT INTO tags (id, name, created_at) VALUES ($1, $2, $3) ON CONFLICT(name) DO NOTHING',
+        [tagId, tagName, timestamp],
+      );
+      const tag = await db.select<{ id: string }[]>('SELECT id FROM tags WHERE name = $1 LIMIT 1', [
+        tagName,
+      ]);
+      if (tag[0])
+        await db.execute(
+          'INSERT OR IGNORE INTO document_tags (document_id, tag_id) VALUES ($1, $2)',
+          [id, tag[0].id],
+        );
+    }
+  });
+}
+
+export async function deleteDesktopDocument(id: string | number): Promise<void> {
+  if (!DESKTOP) return;
+  return enqueueDesktopWrite(async () => {
+    const db = await openDatabase();
+    await db.execute('DELETE FROM documents WHERE id = $1', [String(id)]);
+  });
+}
 export async function saveDesktopProjects(projects: RuntimeProject[]): Promise<void> {
   if (!DESKTOP) return;
   return enqueueDesktopWrite(async () => {
