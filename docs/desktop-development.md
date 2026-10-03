@@ -35,3 +35,11 @@ Linux 发布使用 `npm run tauri:build -- --bundles deb,appimage`，产物位�
 - 当前尚未提供浏览器 Demo 数据迁移到桌面版的能力。
 - 当前 Linux 首发目标为 Debian 13（trixie）amd64，首发产物为 `.deb` 和 AppImage。
 - 不按系统复制 `src-linux` 等源码目录；React、数据层和 Tauri 业务代码保持共用，系统差异集中在构建配置和必要的平台适配层。
+
+## 质量与发布
+
+- 
+pm run check：版本、格式、TypeScript、单元测试和隔离前端构建。
+- 
+pm run rust:check：Rust 格式、编译和 Clippy。
+- 发布前检查项见 [发布检查清单](./release-checklist.md)。

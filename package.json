@@ -9,11 +9,15 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css}\" \"scripts/**/*.mjs\" \"src-tauri/**/*.json\" \"package.json\" \"package-lock.json\" \"vite.config.js\" \"tsconfig.json\" \".github/workflows/*.yml\" \"docs/**/*.md\"",
+    "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css}\" \"scripts/**/*.mjs\" \"src-tauri/**/*.json\" \"package.json\" \"package-lock.json\" \"vite.config.js\" \"tsconfig.json\" \".github/workflows/*.yml\" \"docs/**/*.md\"",
     "typecheck": "tsc --noEmit",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "build:check": "npm run build -- --outDir .verify-dist",
+    "version:check": "node scripts/check-version.mjs",
+    "check": "npm run version:check && npm run format:check && npm run typecheck && npm run test && npm run build:check",
+    "rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
