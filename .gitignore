@@ -8,6 +8,10 @@ build/
 .tmp-dist/
 .verify-dist/
 
+# Tauri generated output
+src-tauri/target/
+src-tauri/gen/
+
 # Environment files
 .env
 .env.*
