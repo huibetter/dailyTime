@@ -19,6 +19,12 @@ const ALLOWED_TAGS = [
   'p',
   'pre',
   'strong',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'th',
+  'td',
   'ul',
 ];
 const ALLOWED_ATTR = [
@@ -39,8 +45,9 @@ export function renderMarkdown(markdown: string): string {
     breaks: true,
   });
   if (typeof parsed !== 'string') return '';
+  const interactive = parsed.replace(/\sdisabled=""/g, '');
   if (typeof window === 'undefined') return parsed;
-  return DOMPurify.sanitize(parsed, {
+  return DOMPurify.sanitize(interactive, {
     ALLOWED_ATTR,
     ALLOWED_TAGS,
     FORBID_ATTR: ['style', 'onerror', 'onclick', 'onload'],

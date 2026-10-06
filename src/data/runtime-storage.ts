@@ -1,5 +1,16 @@
 import { isTauri } from '@tauri-apps/api/core';
 import { openDatabase } from './database';
+import { removeLocalResource } from '../lib/resources';
+import type { EditorDocumentState } from '../lib/editor-document';
+
+export interface RuntimeAttachment {
+  id: string;
+  originalName: string;
+  relativePath: string;
+  mimeType: string | null;
+  sizeBytes: number;
+  createdAt: string;
+}
 
 export interface RuntimeProject {
   id: string;
@@ -12,12 +23,14 @@ export interface RuntimeDocument {
   project: string;
   title: string;
   content: string;
+  editorState?: EditorDocumentState | null;
+  contentFormat?: 'markdown' | 'tiptap-json';
   updated: string;
   planned: string | null;
   plannedTime: string | null;
   status: '未开始' | '进行中' | '已完成';
   tags: string[];
-  attachments: string[];
+  attachments: Array<string | RuntimeAttachment>;
 }
 
 export interface RuntimeState {
@@ -42,6 +55,8 @@ interface DocumentRow {
   project_id: string;
   title: string;
   content: string;
+  editor_state: string | null;
+  content_format: 'markdown' | 'tiptap-json' | null;
   planned_date: string | null;
   planned_time: string | null;
   status: RuntimeDocument['status'];
@@ -51,6 +66,16 @@ interface DocumentRow {
 interface TagRow {
   document_id: string;
   name: string;
+}
+
+interface AttachmentRow {
+  id: string;
+  document_id: string;
+  original_name: string;
+  relative_path: string;
+  mime_type: string | null;
+  size_bytes: number;
+  created_at: string;
 }
 
 interface SettingRow {
@@ -119,14 +144,31 @@ export async function loadDesktopState(): Promise<RuntimeState> {
     [workspaceId],
   );
   const documents = await db.select<DocumentRow[]>(
-    'SELECT id, project_id, title, content, planned_date, planned_time, status, updated_at FROM documents ORDER BY planned_date DESC, planned_time DESC',
+    'SELECT id, project_id, title, content, editor_state, content_format, planned_date, planned_time, status, updated_at FROM documents ORDER BY planned_date DESC, planned_time DESC',
   );
   const tags = await db.select<TagRow[]>(
     'SELECT document_tags.document_id, tags.name FROM document_tags JOIN tags ON tags.id = document_tags.tag_id',
   );
+  const attachments = await db.select<AttachmentRow[]>(
+    'SELECT id, document_id, original_name, relative_path, mime_type, size_bytes, created_at FROM attachments',
+  );
   const tagsByDocument = new Map<string, string[]>();
   for (const tag of tags)
     tagsByDocument.set(tag.document_id, [...(tagsByDocument.get(tag.document_id) ?? []), tag.name]);
+  const attachmentsByDocument = new Map<string, RuntimeAttachment[]>();
+  for (const attachment of attachments) {
+    attachmentsByDocument.set(attachment.document_id, [
+      ...(attachmentsByDocument.get(attachment.document_id) ?? []),
+      {
+        id: attachment.id,
+        originalName: attachment.original_name,
+        relativePath: attachment.relative_path,
+        mimeType: attachment.mime_type,
+        sizeBytes: attachment.size_bytes,
+        createdAt: attachment.created_at,
+      },
+    ]);
+  }
 
   return {
     projects,
@@ -135,14 +177,26 @@ export async function loadDesktopState(): Promise<RuntimeState> {
       project: document.project_id,
       title: document.title,
       content: document.content,
+      editorState: parseEditorState(document.editor_state),
+      contentFormat: document.content_format || 'markdown',
       updated: formatUpdated(document.updated_at),
       planned: document.planned_date,
       plannedTime: document.planned_time,
       status: document.status,
       tags: tagsByDocument.get(document.id) ?? [],
-      attachments: [],
+      attachments: attachmentsByDocument.get(document.id) ?? [],
     })),
   };
+}
+
+function parseEditorState(value: string | null): RuntimeDocument['editorState'] {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed?.type === 'doc' && Array.isArray(parsed.content) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function workspaceId(): Promise<string | null> {
@@ -184,16 +238,19 @@ export async function saveDesktopDocument(document: RuntimeDocument): Promise<vo
     const timestamp = now();
     const id = String(document.id);
     await db.execute(
-      `INSERT INTO documents (id, project_id, title, content, planned_date, planned_time, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO documents (id, project_id, title, content, editor_state, content_format, planned_date, planned_time, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, title = excluded.title,
-       content = excluded.content, planned_date = excluded.planned_date, planned_time = excluded.planned_time,
+       content = excluded.content, editor_state = excluded.editor_state, content_format = excluded.content_format,
+       planned_date = excluded.planned_date, planned_time = excluded.planned_time,
        status = excluded.status, updated_at = excluded.updated_at`,
       [
         id,
         document.project,
         document.title,
         document.content,
+        document.editorState ? JSON.stringify(document.editorState) : null,
+        document.contentFormat || 'markdown',
         document.planned,
         document.plannedTime,
         document.status,
@@ -217,6 +274,23 @@ export async function saveDesktopDocument(document: RuntimeDocument): Promise<vo
           [id, tag[0].id],
         );
     }
+    await db.execute('DELETE FROM attachments WHERE document_id = $1', [id]);
+    for (const attachment of document.attachments ?? []) {
+      if (typeof attachment === 'string') continue;
+      await db.execute(
+        `INSERT INTO attachments (id, document_id, original_name, relative_path, mime_type, size_bytes, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          attachment.id,
+          id,
+          attachment.originalName,
+          attachment.relativePath,
+          attachment.mimeType,
+          attachment.sizeBytes,
+          attachment.createdAt,
+        ],
+      );
+    }
   });
 }
 
@@ -224,7 +298,16 @@ export async function deleteDesktopDocument(id: string | number): Promise<void> 
   if (!DESKTOP) return;
   return enqueueDesktopWrite(async () => {
     const db = await openDatabase();
+    const attachments = await db.select<{ relative_path: string }[]>(
+      'SELECT relative_path FROM attachments WHERE document_id = $1',
+      [String(id)],
+    );
     await db.execute('DELETE FROM documents WHERE id = $1', [String(id)]);
+    await Promise.all(
+      attachments.map((attachment) =>
+        removeLocalResource(attachment.relative_path).catch(() => undefined),
+      ),
+    );
   });
 }
 export async function saveDesktopProjects(projects: RuntimeProject[]): Promise<void> {
@@ -302,16 +385,19 @@ export async function saveDesktopDocuments(docs: RuntimeDocument[]): Promise<voi
     for (const document of docs) {
       const id = String(document.id);
       await db.execute(
-        `INSERT INTO documents (id, project_id, title, content, planned_date, planned_time, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO documents (id, project_id, title, content, editor_state, content_format, planned_date, planned_time, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, title = excluded.title,
-       content = excluded.content, planned_date = excluded.planned_date, planned_time = excluded.planned_time,
+       content = excluded.content, editor_state = excluded.editor_state, content_format = excluded.content_format,
+       planned_date = excluded.planned_date, planned_time = excluded.planned_time,
        status = excluded.status, updated_at = excluded.updated_at`,
         [
           id,
           document.project,
           document.title,
           document.content,
+          document.editorState ? JSON.stringify(document.editorState) : null,
+          document.contentFormat || 'markdown',
           document.planned,
           document.plannedTime,
           document.status,

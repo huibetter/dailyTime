@@ -27,9 +27,20 @@ describe('document utilities', () => {
       planned: '2026-10-03',
       plannedTime: '09:05',
       tags: ['计划'],
+      attachments: [
+        {
+          id: 'resource-1',
+          originalName: '截图.png',
+          relativePath: 'resources/d-1/resource-1.png',
+          mimeType: 'image/png',
+          sizeBytes: 1024,
+          createdAt: '2026-10-05T00:00:00.000Z',
+        },
+      ],
     });
     expect(documentTitle(document)).toBe('会议记录');
     expect(documentMarkdown(document, '产品')).toContain('> 标签：计划');
+    expect(documentMarkdown(document, '产品')).toContain('- 截图.png');
     expect(safeFileName('产品/会议')).toBe('产品-会议');
   });
 });

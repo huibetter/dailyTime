@@ -7,7 +7,7 @@ import type {
 import { normalizeDocument } from './document-utils';
 
 export const BACKUP_FORMAT = 'dailytime';
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 
 export interface BackupPreferences {
   theme: 'light' | 'system' | 'dark';
@@ -68,7 +68,7 @@ function validateEnvelope(value: unknown): asserts value is BackupEnvelope {
   if (
     !isRecord(value) ||
     value.format !== BACKUP_FORMAT ||
-    value.formatVersion !== BACKUP_FORMAT_VERSION ||
+    ![1, BACKUP_FORMAT_VERSION].includes(value.formatVersion as number) ||
     typeof value.appVersion !== 'string' ||
     typeof value.createdAt !== 'string' ||
     !isRecord(value.data) ||

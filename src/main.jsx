@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { EditorContent, useEditor } from '@tiptap/react';
 import {
   ArrowLeft,
   CalendarDays,
@@ -28,7 +30,12 @@ import { isDesktopStorage } from './data/runtime-storage';
 import { persistWorkspaceChanges } from './data/repository';
 import { workspaceRepository } from './data/workspace-repository';
 import { currentSchedule, dayLabel, monthCursor, todayKey } from './lib/date-utils';
-import { renderMarkdown } from './lib/markdown';
+import {
+  isLocalResourceSupported,
+  resolveMarkdownResourceUrls,
+  resourceUrl,
+  saveLocalResource,
+} from './lib/resources';
 import { backupToState, parseBackup, serializeBackup } from './lib/backup';
 import {
   documentMarkdown,
@@ -37,6 +44,20 @@ import {
   normalizeDocument,
   safeFileName,
 } from './lib/document-utils';
+import {
+  EDITOR_DOCUMENT_VERSION,
+  editorStateToMarkdown,
+  markdownToEditorState,
+  normalizeEditorState,
+} from './lib/editor-document';
+import { createStructuredEditorExtensions } from './lib/structured-editor';
+import {
+  EDITOR_FORMAT_DOCUMENT_ID,
+  EDITOR_PERFORMANCE_DOCUMENT_ID,
+  EDITOR_TEST_PROJECT_ID,
+  createEditorTestWorkspace,
+  removeEditorTestWorkspace,
+} from './lib/editor-test-fixtures';
 import './styles.css';
 
 const TODAY = todayKey();
@@ -69,51 +90,6 @@ function exportDocuments(docs, projectName, filename) {
   downloadMarkdown(filename, content || `# ${projectName || '项目'}\n\n暂无记录\n`);
 }
 
-function htmlToMarkdown(root) {
-  const renderInline = (node) => {
-    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
-    if (node.nodeType !== Node.ELEMENT_NODE) return '';
-    const inner = [...node.childNodes].map(renderInline).join('');
-    const tag = node.tagName.toLowerCase();
-    if (tag === 'strong' || tag === 'b') return `**${inner}**`;
-    if (tag === 'em' || tag === 'i') return `*${inner}*`;
-    if (tag === 'del' || tag === 's') return `~~${inner}~~`;
-    if (tag === 'code') return `\`${inner}\``;
-    if (tag === 'a') return `[${inner}](${node.getAttribute('href') || ''})`;
-    if (tag === 'img')
-      return `![${node.getAttribute('alt') || ''}](${node.getAttribute('src') || ''})`;
-    return inner;
-  };
-  return [...root.childNodes]
-    .map((node) => {
-      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
-      const tag = node.tagName.toLowerCase();
-      const inner = [...node.childNodes].map(renderInline).join('');
-      if (/^h[1-3]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${inner}`;
-      if (tag === 'blockquote') return `> ${inner}`;
-      if (tag === 'li') return `- ${inner}`;
-      if (tag === 'p') {
-        if (node.classList.contains('check')) {
-          const text = [...node.childNodes]
-            .filter(
-              (child) =>
-                !(child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === 'span'),
-            )
-            .map(renderInline)
-            .join('');
-          return `${node.classList.contains('checked') ? '- [x] ' : '- [ ] '}${text}`;
-        }
-        return inner;
-      }
-      if (tag === 'br') return '';
-      if (tag === 'pre') return `\`\`\`\n${node.textContent}\n\`\`\``;
-      return inner;
-    })
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
 function App() {
   const [projects, setProjects] = useState([]);
   const [docs, setDocs] = useState([]);
@@ -142,23 +118,55 @@ function App() {
 
   const [profileReady, setProfileReady] = useState(false);
   const [persistence, setPersistence] = useState({ status: 'idle', message: '' });
-  const area = useRef(null);
+  const [dirtyDocuments, setDirtyDocuments] = useState([]);
+  const [exitPrompt, setExitPrompt] = useState(false);
+  const allowClose = useRef(false);
   const uploadInput = useRef(null);
   const menuRef = useRef(null);
   const undoStack = useRef([]);
   const undoConfirm = useRef(null);
+  const workspaceRef = useRef({ projects: [], docs: [] });
+  const editorDrafts = useRef(new Map());
+  const editorSnapshots = useRef(new Map());
+  const persistenceState = useRef({
+    persisted: { projects: [], docs: [] },
+    pending: null,
+    running: false,
+  });
   useEffect(() => {
     Promise.all([workspaceRepository.loadState(), workspaceRepository.loadSettings()])
       .then(([state, settings]) => {
         const nextProfile = settings || DEFAULT_PROFILE;
+        const normalizedDocs = state.docs.map((document) => {
+          const normalized = normalizeDocument(document);
+          if (normalized.editorState) return normalized;
+          return {
+            ...normalized,
+            editorState: markdownToEditorState(normalized.content),
+            contentFormat: 'tiptap-json',
+          };
+        });
+        const migratedState = { projects: state.projects, docs: normalizedDocs };
+        workspaceRef.current = migratedState;
+        persistenceState.current.persisted = { projects: state.projects, docs: state.docs };
         setProjects(state.projects);
-        setDocs(state.docs.map(normalizeDocument));
+        setDocs(normalizedDocs);
         setProject(state.projects[0]?.id ?? null);
         setSelectedId(state.docs[0]?.id ?? null);
         setProfile(nextProfile);
         desktopHydrated.current = true;
         setDesktopReady(true);
         setProfileReady(true);
+        if (normalizedDocs.some((document, index) => !state.docs[index]?.editorState)) {
+          persistWorkspaceChanges(workspaceRepository, {
+            previous: { projects: state.projects, docs: state.docs },
+            next: migratedState,
+          })
+            .then(() => {
+              persistenceState.current.persisted = migratedState;
+            })
+            .catch((error) => console.error('Markdown 文档迁移失败', error));
+        }
         if (!settings && isDesktopStorage())
           workspaceRepository
             .saveSettings(nextProfile)
@@ -171,23 +179,43 @@ function App() {
       });
   }, []);
   function snapshot() {
-    return { projects, docs };
+    return workspaceRef.current;
+  }
+  function queuePersistence(next) {
+    if (!desktopReady || !desktopHydrated.current) return;
+    const state = persistenceState.current;
+    state.pending = next;
+    if (state.running) return;
+    state.running = true;
+    setPersistence({ status: 'saving', message: '正在保存' });
+    const flush = async () => {
+      while (state.pending) {
+        const target = state.pending;
+        state.pending = null;
+        await persistWorkspaceChanges(workspaceRepository, {
+          previous: state.persisted,
+          next: target,
+        });
+        state.persisted = target;
+      }
+      state.running = false;
+      setPersistence({ status: 'saved', message: '已保存' });
+    };
+    flush().catch((error) => {
+      state.running = false;
+      setPersistence({ status: 'error', message: '保存失败' });
+      console.error('DailyTime 数据保存失败', error);
+    });
   }
   function commit(nextProjects, nextDocs, undoMessage = '') {
     const previous = snapshot();
     const next = { projects: nextProjects, docs: nextDocs };
+    workspaceRef.current = next;
     undoStack.current.push({ snapshot: previous, undoMessage });
     if (undoStack.current.length > 80) undoStack.current.shift();
     setProjects(nextProjects);
     setDocs(nextDocs);
-    if (!desktopReady || !desktopHydrated.current) return;
-    setPersistence({ status: 'saving', message: '正在保存' });
-    persistWorkspaceChanges(workspaceRepository, { previous, next })
-      .then(() => setPersistence({ status: 'saved', message: '已保存' }))
-      .catch((error) => {
-        setPersistence({ status: 'error', message: '保存失败' });
-        console.error('DailyTime 数据保存失败', error);
-      });
+    queuePersistence(next);
   }
   function undo() {
     const entry = undoStack.current.pop();
@@ -200,15 +228,20 @@ function App() {
         return;
       }
     }
-    setProjects(entry.snapshot.projects);
-    setDocs(entry.snapshot.docs);
+    const previous = snapshot();
+    const next = entry.snapshot;
+    workspaceRef.current = next;
+    setProjects(next.projects);
+    setDocs(next.docs);
+    queuePersistence(next);
   }
   useEffect(() => {
     const handleUndo = (event) => {
       const key = event.key.toLowerCase();
       const target = event.target;
       const isFormField =
-        target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
       if ((event.ctrlKey || event.metaKey) && key === 'z' && !event.shiftKey && !isFormField) {
         event.preventDefault();
         undo();
@@ -217,6 +250,45 @@ function App() {
     document.addEventListener('keydown', handleUndo);
     return () => document.removeEventListener('keydown', handleUndo);
   });
+  useEffect(() => {
+    const handleSave = (event) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      if (event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+      if (selectedId) void saveDocument(selectedId);
+    };
+    const handleBeforeUnload = (event) => {
+      if (!dirtyDocuments.length) return;
+      event.preventDefault();
+      event.returnValue = '当前有未保存的文档修改。';
+    };
+    document.addEventListener('keydown', handleSave);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      document.removeEventListener('keydown', handleSave);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [dirtyDocuments, selectedId]);
+  useEffect(() => {
+    if (!isDesktopStorage()) return undefined;
+    let disposed = false;
+    let unlisten;
+    getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (allowClose.current || !dirtyDocuments.length) return;
+        event.preventDefault();
+        setExitPrompt(true);
+      })
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
+      .catch((error) => console.error('监听窗口关闭失败', error));
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [dirtyDocuments]);
 
   useEffect(
     () => localStorage.setItem('dt-sidebar-collapsed', JSON.stringify(sidebarCollapsed)),
@@ -287,7 +359,8 @@ function App() {
     [projects, projectQuery],
   );
   const updateDoc = (id, patch) => {
-    const next = docs.map((d) => {
+    const current = snapshot();
+    const next = current.docs.map((d) => {
       if (d.id !== id) return d;
       const nextContent = patch.content ?? d.content;
       return {
@@ -298,15 +371,107 @@ function App() {
         updated: '刚刚',
       };
     });
-    commit(projects, next);
+    commit(current.projects, next);
   };
   const update = (patch) => selected && updateDoc(selected.id, patch);
-  function deleteDoc(id) {
-    const remaining = docs.filter((d) => d.id !== id);
-    commit(projects, remaining);
-    if (selectedId === id) {
-      setSelectedId(remaining.find((d) => d.project === project)?.id ?? null);
+  function updateEditorDraft(id, editorState) {
+    const normalized = normalizeEditorState(editorState);
+    if (!normalized) return;
+    editorDrafts.current.set(id, normalized);
+    setDirtyDocuments((items) => {
+      if (items.includes(id)) return items;
+      setPersistence({ status: 'dirty', message: '有未保存修改' });
+      return [...items, id];
+    });
+  }
+  async function saveDocument(id) {
+    const original = snapshot().docs.find((item) => item.id === id);
+    if (!original) return false;
+    const editorState = editorDrafts.current.get(id) || original.editorState;
+    const markdown = editorState ? editorStateToMarkdown(editorState) : original.content;
+    const savedDraftSnapshot = editorState ? JSON.stringify(editorState) : null;
+    const document = {
+      ...original,
+      editorState,
+      contentFormat: editorState ? 'tiptap-json' : original.contentFormat,
+      content: markdown,
+      title: firstHeading(markdown) || original.title,
+      updated: '刚刚',
+    };
+    setPersistence({ status: 'saving', message: '正在保存' });
+    try {
+      await workspaceRepository.upsertDocument(document);
+      const latestDraft = editorDrafts.current.get(id);
+      const draftChanged = latestDraft && JSON.stringify(latestDraft) !== savedDraftSnapshot;
+      if (!draftChanged) editorDrafts.current.delete(id);
+      const nextDocs = snapshot().docs.map((item) =>
+        item.id === id
+          ? { ...document, ...(draftChanged ? { editorState: latestDraft } : {}) }
+          : item,
+      );
+      workspaceRef.current = { ...snapshot(), docs: nextDocs };
+      setDocs(nextDocs);
+      const persisted = persistenceState.current.persisted;
+      persistenceState.current.persisted = {
+        ...persisted,
+        docs: [...persisted.docs.filter((item) => item.id !== id), document],
+      };
+      if (!draftChanged) {
+        setDirtyDocuments((items) => items.filter((item) => item !== id));
+        setPersistence({ status: 'saved', message: '已保存' });
+      } else {
+        setPersistence({ status: 'dirty', message: '保存后仍有新修改' });
+      }
+      return true;
+    } catch (error) {
+      setPersistence({ status: 'error', message: '保存失败，请重试' });
+      console.error('DailyTime 文档保存失败', error);
+      return false;
     }
+  }
+  async function saveDirtyDocuments() {
+    for (const id of dirtyDocuments) {
+      if (!(await saveDocument(id))) return false;
+    }
+    return true;
+  }
+  async function saveAndClose() {
+    if (!(await saveDirtyDocuments())) return;
+    allowClose.current = true;
+    setExitPrompt(false);
+    await getCurrentWindow().close();
+  }
+  async function discardAndClose() {
+    allowClose.current = true;
+    setExitPrompt(false);
+    await getCurrentWindow().close();
+  }
+  function deleteDoc(id) {
+    const current = snapshot();
+    const remaining = current.docs.filter((d) => d.id !== id);
+    commit(current.projects, remaining);
+    setSelectedId((currentId) =>
+      currentId === id ? (remaining.find((d) => d.project === project)?.id ?? null) : currentId,
+    );
+  }
+  function updateEditorTests(regenerate = false) {
+    const next = createEditorTestWorkspace(snapshot());
+    commit(next.projects, next.docs, regenerate ? '' : '是否撤回编辑器测试项目？');
+    setProject(EDITOR_TEST_PROJECT_ID);
+    setSelectedId(EDITOR_FORMAT_DOCUMENT_ID);
+    setProjectScheduleId(null);
+    setView('notes');
+    setPersistence({
+      status: 'saved',
+      message: regenerate ? '测试文档已重新生成' : '测试项目已生成',
+    });
+  }
+  function deleteEditorTests() {
+    const next = removeEditorTestWorkspace(snapshot());
+    commit(next.projects, next.docs, '是否撤回删除编辑器测试项目？');
+    setProject(next.projects[0]?.id ?? null);
+    setSelectedId(next.docs[0]?.id ?? null);
+    setPersistence({ status: 'saved', message: '测试项目已删除' });
   }
   function closeMenus() {
     setOpenMenu(null);
@@ -389,54 +554,65 @@ function App() {
     }
     setProjectToDelete(null);
   }
-  function upload(e) {
-    const fs = [...e.target.files];
-    if (fs.length)
-      update({
-        attachments: [
-          ...selected.attachments,
-          ...fs.map((f) => `${f.name} · ${Math.ceil(f.size / 1024)} KB`),
-        ],
-      });
+  async function importResource(file) {
+    if (!isLocalResourceSupported()) {
+      setPersistence({ status: 'error', message: '浏览器版不支持导入本地图片，请使用桌面端' });
+      return null;
+    }
+    try {
+      return await saveLocalResource(selected.id, file);
+    } catch (error) {
+      setPersistence({ status: 'error', message: '本地资源保存失败' });
+      console.error('DailyTime 本地资源保存失败', error);
+      return null;
+    }
+  }
+  async function upload(e) {
+    const files = [...e.target.files];
+    if (files.length && selected) {
+      const resources = (await Promise.all(files.map(importResource))).filter(Boolean);
+      if (resources.length) update({ attachments: [...selected.attachments, ...resources] });
+    }
+    e.target.value = '';
     closeMenus();
   }
-  function pasteImage(e) {
-    const image = [...(e.clipboardData?.items || [])].find((item) =>
-      item.type.startsWith('image/'),
-    );
-    if (!image) return;
-    e.preventDefault();
-    const file = image.getAsFile();
-    const reader = new FileReader();
-    reader.onload = () => {
-      const alt = file.name || 'pasted-image.png';
-      const insertion = `\n![${alt}](${reader.result})\n`;
-      const el = area.current;
-      const start = el?.selectionStart ?? selected.content.length;
-      const end = el?.selectionEnd ?? start;
+  function pasteImage(file, editor) {
+    void importResource(file).then((resource) => {
+      if (!resource || !selected) return;
+      void resourceUrl(resource.relativePath).then((src) =>
+        editor
+          .chain()
+          .focus()
+          .setImage({
+            src,
+            markdownSrc: `dt-resource:${resource.relativePath}`,
+            alt: resource.originalName,
+            title: resource.originalName,
+          })
+          .run(),
+      );
       update({
-        content: selected.content.slice(0, start) + insertion + selected.content.slice(end),
+        attachments: [...selected.attachments, resource],
       });
-    };
-    reader.readAsDataURL(file);
-  }
-  function insert(a, b = '') {
-    const el = area.current;
-    if (!el) return;
-    const s = el.selectionStart,
-      e = el.selectionEnd,
-      v = selected.content;
-    update({ content: v.slice(0, s) + a + v.slice(s, e) + b + v.slice(e) });
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(s + a.length, e + a.length);
     });
   }
   function exportBackup() {
+    const backupDocs = docs.map((document) => {
+      const editorState =
+        editorDrafts.current.get(document.id) ||
+        document.editorState ||
+        markdownToEditorState(document.content);
+      return {
+        ...document,
+        editorState,
+        contentFormat: 'tiptap-json',
+        content: editorStateToMarkdown(editorState),
+      };
+    });
     const content = serializeBackup(
       {
         projects,
-        docs,
+        docs: backupDocs,
         profile,
         preferences: { theme, compact, sidebarCollapsed, timelineWidth },
       },
@@ -483,7 +659,11 @@ function App() {
   function exportSelected() {
     if (selected) {
       const name = projects.find((item) => item.id === selected.project)?.name;
-      downloadMarkdown(documentTitle(selected), documentMarkdown(selected, name));
+      const draft = editorDrafts.current.get(selected.id);
+      const document = draft
+        ? { ...selected, editorState: draft, content: editorStateToMarkdown(draft) }
+        : selected;
+      downloadMarkdown(documentTitle(document), documentMarkdown(document, name));
     }
   }
   const menu = (name, label, Icon, items) => (
@@ -689,6 +869,7 @@ function App() {
               title={persistence.message}
             >
               {persistence.status === 'saving' && '保存中…'}
+              {persistence.status === 'dirty' && '未保存'}
               {persistence.status === 'saved' && '已保存'}
               {persistence.status === 'error' && '保存失败'}
             </span>
@@ -740,6 +921,10 @@ function App() {
               setCompact,
               onExportBackup: exportBackup,
               onImportBackup: importBackup,
+              hasEditorTests: projects.some((item) => item.id === EDITOR_TEST_PROJECT_ID),
+              onGenerateEditorTests: () => updateEditorTests(false),
+              onRegenerateEditorTests: () => updateEditorTests(true),
+              onDeleteEditorTests: deleteEditorTests,
               onBack: () => {
                 setView('notes');
                 closeMenus();
@@ -756,14 +941,16 @@ function App() {
                 selected,
                 setSelectedId,
                 create,
-                area,
+                editorDrafts,
+                editorSnapshots,
                 update,
-                updateDoc,
+                updateEditorDraft,
                 deleteDoc,
                 exportSelected,
                 upload,
-                insert,
                 pasteImage,
+                dirtyDocuments,
+                saveDocument,
                 timelineWidth,
                 setTimelineWidth,
               }}
@@ -831,6 +1018,28 @@ function App() {
           </div>
         </div>
       )}
+      {exitPrompt && (
+        <div className="modal" onMouseDown={() => setExitPrompt(false)}>
+          <div className="modal-box" onMouseDown={(event) => event.stopPropagation()}>
+            <div>
+              <b>有未保存的修改</b>
+              <button onClick={() => setExitPrompt(false)}>
+                <X size={16} />
+              </button>
+            </div>
+            <p>关闭 DailyTime 前，是否保存当前未保存的文档？</p>
+            <footer>
+              <button onClick={() => setExitPrompt(false)}>取消</button>
+              <button className="danger-action" onClick={() => void discardAndClose()}>
+                放弃退出
+              </button>
+              <button className="primary-action" onClick={() => void saveAndClose()}>
+                保存并退出
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -860,6 +1069,10 @@ function SettingsPage({
   setCompact,
   onExportBackup,
   onImportBackup,
+  hasEditorTests,
+  onGenerateEditorTests,
+  onRegenerateEditorTests,
+  onDeleteEditorTests,
   onBack,
 }) {
   const [update, setUpdate] = useState({ status: 'idle' });
@@ -889,6 +1102,7 @@ function SettingsPage({
     { id: 'general', label: '通用', description: '账户与工作空间', Icon: UserRound },
     { id: 'appearance', label: '外观', description: '主题与布局', Icon: Palette },
     { id: 'backup', label: '备份', description: '导出与恢复', Icon: Download },
+    { id: 'editor-tests', label: '编辑器测试', description: '格式与性能验收', Icon: FileText },
     { id: 'about', label: '关于', description: '版本与更新', Icon: Info },
   ];
   return (
@@ -1000,6 +1214,43 @@ function SettingsPage({
             </div>
           </>
         )}{' '}
+        {section === 'editor-tests' && (
+          <>
+            <div className="settings-heading">
+              <small>EDITOR VALIDATION</small>
+              <h1>编辑器测试</h1>
+              <p>生成可重复使用的格式覆盖与长文档性能测试内容。</p>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-heading">
+                <FileText size={17} />
+                <div>
+                  <h2>测试项目</h2>
+                  <p>包含核心 Markdown 格式示例和 200 段长文档，不修改其他项目。</p>
+                </div>
+              </div>
+              <div className="settings-actions">
+                {hasEditorTests ? (
+                  <>
+                    <button className="primary-action" onClick={onRegenerateEditorTests}>
+                      <RefreshCw size={14} />
+                      重新生成测试文档
+                    </button>
+                    <button className="secondary-action" onClick={onDeleteEditorTests}>
+                      <Trash2 size={14} />
+                      删除测试项目
+                    </button>
+                  </>
+                ) : (
+                  <button className="primary-action" onClick={onGenerateEditorTests}>
+                    <Plus size={14} />
+                    生成编辑器测试项目
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
         {section === 'appearance' && (
           <>
             <div className="settings-heading">
@@ -1123,6 +1374,153 @@ function SettingsPage({
     </div>
   );
 }
+function MarkdownEditor({ selected, editorState, editorSnapshots, updateEditorDraft, pasteImage }) {
+  const surfaceRef = useRef(null);
+  const editor = useEditor(
+    {
+      extensions: createStructuredEditorExtensions(),
+      content: editorState || selected.editorState || markdownToEditorState(selected.content),
+      onCreate: ({ editor: current }) => {
+        const snapshot = editorSnapshots.current.get(selected.id);
+        if (!snapshot) return;
+        try {
+          current.commands.setTextSelection(snapshot.selection);
+        } catch {
+          editorSnapshots.current.delete(selected.id);
+          return;
+        }
+        requestAnimationFrame(() => {
+          if (surfaceRef.current) surfaceRef.current.scrollTop = snapshot.scrollTop;
+        });
+      },
+      onSelectionUpdate: ({ editor: current }) => {
+        editorSnapshots.current.set(selected.id, {
+          selection: {
+            anchor: current.state.selection.anchor,
+            head: current.state.selection.head,
+          },
+          scrollTop: surfaceRef.current?.scrollTop || 0,
+        });
+      },
+      onUpdate: ({ editor: current }) => {
+        updateEditorDraft(selected.id, {
+          type: 'doc',
+          version: EDITOR_DOCUMENT_VERSION,
+          ...current.getJSON(),
+        });
+      },
+      editorProps: {
+        attributes: {
+          class: 'tiptap-document',
+          'aria-label': 'Markdown 文档编辑器',
+          spellcheck: 'false',
+        },
+        handlePaste: (_view, event) => {
+          const imageItem = [...(event.clipboardData?.items || [])].find((item) =>
+            item.type.startsWith('image/'),
+          );
+          if (!imageItem) return false;
+          const file = imageItem.getAsFile();
+          if (file) pasteImage(file, editor);
+          return true;
+        },
+      },
+      immediatelyRender: false,
+    },
+    [selected.id],
+  );
+  const imageInput = useRef(null);
+
+  useEffect(() => {
+    if (!editor) return undefined;
+    let active = true;
+    const source = editorStateToMarkdown(editor.getJSON());
+    resolveMarkdownResourceUrls(source).then((resolved) => {
+      if (!active) return;
+      const sources = [...resolved.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1]);
+      [...editor.view.dom.querySelectorAll('img')].forEach((image, index) => {
+        if (sources[index]) image.setAttribute('src', sources[index]);
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [editor, selected.id]);
+
+  if (!editor) return <div className="markdown-editor-surface" />;
+
+  const buttons = [
+    [
+      'H1',
+      () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
+      editor.isActive('heading', { level: 1 }),
+    ],
+    [
+      'H2',
+      () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
+      editor.isActive('heading', { level: 2 }),
+    ],
+    ['B', () => editor.chain().focus().toggleBold().run(), editor.isActive('bold')],
+    ['I', () => editor.chain().focus().toggleItalic().run(), editor.isActive('italic')],
+    ['S', () => editor.chain().focus().toggleStrike().run(), editor.isActive('strike')],
+    ['</>', () => editor.chain().focus().toggleCode().run(), editor.isActive('code')],
+    ['引用', () => editor.chain().focus().toggleBlockquote().run(), editor.isActive('blockquote')],
+    ['列表', () => editor.chain().focus().toggleBulletList().run(), editor.isActive('bulletList')],
+    ['1.', () => editor.chain().focus().toggleOrderedList().run(), editor.isActive('orderedList')],
+    ['任务', () => editor.chain().focus().toggleTaskList().run(), editor.isActive('taskList')],
+    ['代码块', () => editor.chain().focus().toggleCodeBlock().run(), editor.isActive('codeBlock')],
+    ['分隔线', () => editor.chain().focus().setHorizontalRule().run(), false],
+  ];
+
+  return (
+    <div className="markdown-editor-surface markdown-live-editor" ref={surfaceRef}>
+      <div className="structured-editor-toolbar" role="toolbar" aria-label="格式工具栏">
+        {buttons.map(([label, action, active]) => (
+          <button
+            key={label}
+            type="button"
+            className={active ? 'active' : ''}
+            title={label}
+            aria-label={label}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={action}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => imageInput.current?.click()}
+        >
+          图片
+        </button>
+        <button
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const href = window.prompt('输入链接地址');
+            if (href) editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
+          }}
+        >
+          链接
+        </button>
+      </div>
+      <input
+        type="file"
+        accept="image/*"
+        hidden
+        value=""
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          if (file) pasteImage(file, editor);
+        }}
+        ref={imageInput}
+      />
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
 function NotesView({
   projects,
   project,
@@ -1130,14 +1528,16 @@ function NotesView({
   selected,
   setSelectedId,
   create,
-  area,
+  editorDrafts,
+  editorSnapshots,
   update,
-  updateDoc,
+  updateEditorDraft,
   deleteDoc,
   exportSelected,
   upload,
-  insert,
   pasteImage,
+  dirtyDocuments,
+  saveDocument,
   timelineWidth,
   setTimelineWidth,
 }) {
@@ -1160,6 +1560,7 @@ function NotesView({
   const tagManagerRef = useRef(null);
   const layoutRef = useRef(null);
   const resizing = useRef(false);
+
   useEffect(() => {
     const close = (e) => {
       if (tagManagerRef.current && !tagManagerRef.current.contains(e.target))
@@ -1255,25 +1656,28 @@ function NotesView({
               </div>
               <div className="timeline-notes">
                 {items.map((d) => (
-                  <div
+                  <article
                     className={`note-item ${selected?.id === d.id ? 'selected' : ''}`}
                     key={d.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedId(d.id)}
-                    onKeyDown={(e) => handleTaskKeyDown(d, e)}
                   >
-                    <div className="note-title-row">
-                      <FileText size={14} />
-                      <b>{documentTitle(d)}</b>
-                    </div>
-                    <p>
-                      {d.content
-                        .replace(/^#\s+.*(?:\r?\n|$)/m, '')
-                        .replace(/[#>*\-\[\]]/g, '')
-                        .trim()
-                        .slice(0, 65)}
-                    </p>
+                    <button
+                      className="note-select"
+                      type="button"
+                      onClick={() => setSelectedId(d.id)}
+                      onKeyDown={(e) => handleTaskKeyDown(d, e)}
+                    >
+                      <div className="note-title-row">
+                        <FileText size={14} />
+                        <b>{documentTitle(d)}</b>
+                      </div>
+                      <p>
+                        {d.content
+                          .replace(/^#\s+.*(?:\r?\n|$)/m, '')
+                          .replace(/[#>*\-\[\]]/g, '')
+                          .trim()
+                          .slice(0, 65)}
+                      </p>
+                    </button>
                     <div className="note-meta-row">
                       <small>
                         {d.plannedTime || '未设置时间'} · {d.updated}
@@ -1281,6 +1685,7 @@ function NotesView({
                       </small>
                       <button
                         className="note-delete"
+                        type="button"
                         aria-label={`删除${documentTitle(d)}`}
                         title="删除项目日程"
                         onClick={(e) => removeTask(d, e)}
@@ -1288,7 +1693,7 @@ function NotesView({
                         <Trash2 size={12} />
                       </button>
                     </div>
-                  </div>
+                  </article>
                 ))}
               </div>
             </div>
@@ -1312,6 +1717,9 @@ function NotesView({
                 {projects.find((p) => p.id === selected.project)?.name}
               </span>
               <div className="editor-actions">
+                <button className="editor-export" onClick={exportSelected} title="导出当前记录">
+                  <Download size={14} /> 导出
+                </button>
                 <div className="editor-tags" ref={tagManagerRef}>
                   <div className="tag-chips">
                     {selected.tags.map((t) => (
@@ -1410,41 +1818,26 @@ function NotesView({
                 </button>
               </div>
             </div>
-            <div className="format-bar">
-              <button onClick={exportSelected} title="导出当前记录">
-                <Download size={14} /> 导出
-              </button>
-              <span />
-              <button onClick={() => insert('## ')}>H2</button>
-              <button onClick={() => insert('**', '**')}>
-                <b>B</b>
-              </button>
-              <button onClick={() => insert('- [ ] ')}>☑</button>
-              <button onClick={() => insert('> ')}>❞</button>
-              <button onClick={() => insert('`', '`')}>˂/˃</button>
-            </div>
             <div className="paper">
-              <div
-                ref={area}
-                className="preview inline-editor"
-                contentEditable
-                suppressContentEditableWarning
-                role="textbox"
-                aria-label="编辑项目记录"
-                onInput={(event) => update({ content: htmlToMarkdown(event.currentTarget) })}
-                onPaste={(event) => {
-                  if (
-                    [...(event.clipboardData?.items || [])].some((item) =>
-                      item.type.startsWith('image/'),
-                    )
-                  ) {
-                    pasteImage(event);
-                  }
-                }}
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(selected.content) }}
+              <MarkdownEditor
+                selected={selected}
+                editorState={editorDrafts.current.get(selected.id)}
+                editorSnapshots={editorSnapshots}
+                updateEditorDraft={updateEditorDraft}
+                pasteImage={pasteImage}
               />
               <div className="paper-foot">
-                <small>{selected.content.length} 字符 · 自动保存</small>
+                <small>
+                  {selected.content.length} 字符 ·{' '}
+                  {dirtyDocuments.includes(selected.id) ? '未保存修改 · Ctrl+S 保存' : '已保存'}
+                </small>
+                <button
+                  type="button"
+                  onClick={() => void saveDocument(selected.id)}
+                  disabled={!dirtyDocuments.includes(selected.id)}
+                >
+                  保存
+                </button>
               </div>
             </div>
           </>

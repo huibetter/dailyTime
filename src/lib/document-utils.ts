@@ -1,4 +1,5 @@
 import type { RuntimeDocument } from '../data/runtime-storage';
+import { editorStateToMarkdown, editorStateToTitle } from './editor-document';
 
 export type DocumentInput = Partial<RuntimeDocument> & {
   id: string | number;
@@ -13,17 +14,28 @@ export function firstHeading(content: string | null | undefined): string {
     .trim();
 }
 
-export function documentTitle(document: Pick<RuntimeDocument, 'content' | 'title'>): string {
-  return firstHeading(document.content) || document.title || '未命名便笺';
+export function documentTitle(
+  document: Pick<RuntimeDocument, 'content' | 'title'> & Partial<RuntimeDocument>,
+): string {
+  return (
+    editorStateToTitle(document.editorState) ||
+    firstHeading(document.content) ||
+    document.title ||
+    '未命名便笺'
+  );
 }
 
 export function normalizeDocument(document: DocumentInput): RuntimeDocument {
   const content = typeof document.content === 'string' ? document.content : '';
-  return {
+  const normalized: RuntimeDocument = {
     ...document,
     id: document.id,
     project: document.project || '',
-    title: firstHeading(content) || document.title || '未命名便笺',
+    title:
+      editorStateToTitle(document.editorState) ||
+      firstHeading(content) ||
+      document.title ||
+      '未命名便笺',
     content,
     updated: document.updated || '刚刚',
     planned: document.planned ?? null,
@@ -32,6 +44,13 @@ export function normalizeDocument(document: DocumentInput): RuntimeDocument {
     tags: Array.isArray(document.tags) ? document.tags : [],
     attachments: Array.isArray(document.attachments) ? document.attachments : [],
   };
+  if (document.editorState) {
+    normalized.editorState = document.editorState;
+    normalized.contentFormat = document.contentFormat || 'tiptap-json';
+  } else if (document.contentFormat) {
+    normalized.contentFormat = document.contentFormat;
+  }
+  return normalized;
 }
 
 export function safeFileName(value: string | null | undefined): string {
@@ -49,7 +68,12 @@ export function documentMarkdown(
     document.tags?.length ? `> 标签：${document.tags.join('、')}` : '',
   ].filter(Boolean);
   const attachments = document.attachments?.length
-    ? `\n\n## 附件\n\n${document.attachments.map((item) => `- ${item}`).join('\n')}`
+    ? `\n\n## 附件\n\n${document.attachments
+        .map((item) => `- ${typeof item === 'string' ? item : item.originalName}`)
+        .join('\n')}`
     : '';
-  return `# ${documentTitle(document)}\n\n${meta.join('\n')}\n\n${document.content || ''}${attachments}\n`;
+  const content = document.editorState
+    ? editorStateToMarkdown(document.editorState)
+    : document.content;
+  return `# ${documentTitle(document)}\n\n${meta.join('\n')}\n\n${content || ''}${attachments}\n`;
 }

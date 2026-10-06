@@ -30,7 +30,7 @@ const snapshot = {
 describe('backup format', () => {
   it('serializes and restores a workspace snapshot', () => {
     const restored = parseBackup(serializeBackup(snapshot, '0.1.4'));
-    expect(restored.formatVersion).toBe(1);
+    expect(restored.formatVersion).toBe(2);
     expect(backupToState(restored)).toEqual({ projects: snapshot.projects, docs: snapshot.docs });
   });
 
