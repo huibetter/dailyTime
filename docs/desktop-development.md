@@ -41,4 +41,3 @@ Linux 发布使用 `npm run tauri:build -- --bundles deb,appimage`，产物位�
 - `npm run check`：版本、格式、TypeScript、单元测试和隔离前端构建。
 - `npm run rust:check`：Rust 格式、编译和 Clippy。
 - 发布前检查项见 [发布检查清单](./release-checklist.md)。
-
