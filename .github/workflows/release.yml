@@ -23,9 +23,6 @@ jobs:
           - name: Linux x64
             os: ubuntu-24.04
             bundles: deb,appimage
-          - name: macOS
-            os: macos-latest
-            bundles: dmg,app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,7 +49,9 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: DailyTime ${{ github.ref_name }}
-          releaseBody: See the assets below for the platform installers.
+          releaseBody: >
+            Windows NSIS/MSI installers are unsigned and may show a SmartScreen warning.
+            Linux DEB and AppImage packages are included. See the assets below.
           releaseDraft: true
           prerelease: false
           args: --bundles ${{ matrix.bundles }}
