@@ -1,24 +1,39 @@
 {
   "name": "dailytimely",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css}\" \"scripts/**/*.mjs\" \"src-tauri/**/*.json\" \"package.json\" \"package-lock.json\" \"vite.config.js\" \"tsconfig.json\" \".github/workflows/*.yml\" \"docs/**/*.md\"",
+    "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css}\" \"scripts/**/*.mjs\" \"src-tauri/**/*.json\" \"package.json\" \"package-lock.json\" \"vite.config.js\" \"tsconfig.json\" \".github/workflows/*.yml\" \"docs/**/*.md\"",
     "typecheck": "tsc --noEmit",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "build:check": "npm run build -- --outDir .verify-dist",
+    "version:check": "node scripts/check-version.mjs",
+    "check": "npm run version:check && npm run format:check && npm run typecheck && npm run test && npm run build:check",
+    "rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-fs": "^2.5.2",
     "@tauri-apps/plugin-sql": "^2.4.1",
+    "@tiptap/extension-image": "^3.31.4",
+    "@tiptap/extension-link": "^3.31.4",
+    "@tiptap/extension-task-item": "^3.31.4",
+    "@tiptap/extension-task-list": "^3.31.4",
+    "@tiptap/extension-underline": "^3.31.4",
+    "@tiptap/react": "^3.31.4",
+    "@tiptap/starter-kit": "^3.31.4",
     "@vitejs/plugin-react": "latest",
+    "dompurify": "^3.4.16",
     "lucide-react": "latest",
+    "marked": "^18.0.14",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
@@ -26,6 +41,9 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
-    "prettier": "^3.9.6"
+    "@types/dompurify": "^3.0.5",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.9.6",
+    "vitest": "^3.2.7"
   }
 }
